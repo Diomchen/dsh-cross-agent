@@ -74,9 +74,13 @@ window.__ModuleLoader__.load({
         display: 'flex',
         flexDirection: 'column',
         gap: 14,
-        padding: '18px 20px',
+        padding: '18px 20px 28px',
         height: '100%',
         overflow: 'auto',
+        boxSizing: 'border-box',
+        width: '100%',
+        maxWidth: 1040,
+        margin: '0 auto',
         font: '13px/1.5 ui-sans-serif, system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif'
       },
       header: { display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' },
@@ -150,7 +154,9 @@ window.__ModuleLoader__.load({
           h('h2', { style: S.title }, '跨端 agent'),
           h('span', { style: S.muted }, `${state.self.name}`),
           h('span', { style: S.mono }, state.self.deviceId.slice(0, 8)),
+          state.startedAt ? h('span', { style: S.muted }, `启动 ${clock(state.startedAt)}`) : null,
           h('span', { style: S.spacer }),
+          h('span', { style: S.muted }, `开放工具 ${state.capabilities?.exposedTools?.length ?? 0}`),
           h('span', { style: S.muted }, `发现 ${state.ports.discovery}/udp · RPC ${state.ports.rpc}/tcp`)
         ),
         error !== '' ? h('div', { style: S.error }, error) : null,
@@ -167,7 +173,7 @@ window.__ModuleLoader__.load({
             : state.pending.map((item, index) => h(PendingRow, { key: item.id, item, first: index === 0, busy, run }))
         ),
 
-        h(Section, { title: `传输（最近 ${state.transfers.length}）` },
+        h(Section, { title: `传输（${state.transfers.length}）` },
           state.transfers.length === 0
             ? h('div', { style: S.empty }, '还没有文件往来。')
             : state.transfers.slice(0, 12).map((row, index) => h('div', {
@@ -178,11 +184,11 @@ window.__ModuleLoader__.load({
             h('span', { style: S.name }, row.name),
             h('span', { style: S.mono }, `${row.size} B`),
             h('span', { style: S.spacer }),
-            h('span', { style: S.muted }, new Date(row.at).toLocaleTimeString())
+            h('span', { style: S.muted }, clock(row.at))
             ))
         ),
 
-        h(Section, { title: `审计（最近 ${Math.min(state.audit.length, 20)}）` },
+        h(Section, { title: `审计（最近 ${state.audit.length} 条）` },
           state.audit.length === 0
             ? h('div', { style: S.empty }, '还没有记录。')
             : state.audit.slice(0, 20).map((row, index) => h('div', {
@@ -192,12 +198,25 @@ window.__ModuleLoader__.load({
             h('span', { style: S.mono }, new Date(row.at).toLocaleTimeString()),
             h('span', { style: S.badge() }, row.kind),
             h('span', { style: S.name }, row.peerName || row.peerId?.slice(0, 8) || '本机'),
-            h('span', { style: S.muted }, row.outcome),
-            h('span', { style: S.spacer }),
-            h('span', { style: S.muted, title: row.detail }, (row.detail ?? '').slice(0, 40))
+            h('span', { style: isBadOutcome(row) ? { ...S.muted, color: '#d9534f' } : S.muted }, row.outcome),
+            h('span', {
+              style: { ...S.muted, flex: '1 1 120px', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+              title: row.detail
+            }, row.detail ?? '')
             ))
         )
       )
+    }
+
+    function isBadOutcome (row) {
+      return row.kind === 'denied' || row.outcome === 'rejected' || String(row.outcome).includes('failed')
+    }
+
+    function clock (at) {
+      const date = new Date(at)
+      const time = date.toLocaleTimeString()
+      const today = new Date().toDateString() === date.toDateString()
+      return today ? time : `${date.toLocaleDateString()} ${time}`
     }
 
     function Section ({ title, children }) {

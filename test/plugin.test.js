@@ -158,6 +158,8 @@ test('GET /cross-agent/state 走通了整条接线', async () => {
     assert.ok(Array.isArray(body.state.peers))
     assert.ok(Array.isArray(body.state.paths.shares))
     assert.deepEqual(body.state.capabilities.exposedTools, [])
+    assert.deepEqual(body.state.audit, [], '启动不该往审计里写东西')
+    assert.ok(Number.isFinite(body.state.startedAt))
   } finally {
     await app.stop()
   }

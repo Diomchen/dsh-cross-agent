@@ -107,6 +107,7 @@ export async function createService (ctx, config = {}) {
 
   const approvedTransfers = new Map()
 
+  let startedAt = null
   let started = false
   let discoveryStarted = false
 
@@ -411,6 +412,7 @@ export async function createService (ctx, config = {}) {
         deviceId: identity.deviceId,
         name: identity.name
       },
+      startedAt,
       ports: {
         discovery: discovery.port || discoveryPort,
         rpc: rpcServer.port || rpcPort
@@ -625,11 +627,7 @@ export async function createService (ctx, config = {}) {
     } catch (error) {
       log.warn(`[dsh-cross-agent] 发现端口 ${discoveryPort} 起不来：${error?.message ?? error}`)
     }
-    await audit.record({
-      kind: 'admit',
-      outcome: 'started',
-      detail: `device=${identity.deviceId} rpc=${rpcServer.port || rpcPort} discovery=${discovery.port || discoveryPort}`
-    })
+    startedAt = Date.now()
   }
 
   async function dispose () {
