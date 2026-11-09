@@ -34,8 +34,18 @@ async function factory () {
 export async function registerTools (ctx, service, { log } = {}) {
   const disposers = []
   const make = await factory()
-  if (make === null) log?.warn?.(`defineTool 不可用（${defineToolError}），退回原始定义对象`)
-  const define = (spec) => (make === null ? spec : make(spec))
+  if (make === null) {
+    log?.note?.(`defineTool 不可用（${defineToolError}）——链接安装的常见情况，参数已自行编译成 JSON Schema，工具照常可用`)
+  }
+  /**
+   * 链接安装时 `@deepseek-ai/dsh-tools` 解析不到，只能交原始定义对象。宿主的注册表
+   * 认的是 JSON Schema，所以参数声明要从"属性内联 required"的写法**自己编译**一份，
+   * 否则模型看到的 parameters 会是一棵没有 type/properties 的树。
+   */
+  const define = (spec) => {
+    if (make !== null) return make(spec)
+    return { ...spec, parameters: toJsonSchema(spec.parameters ?? {}) }
+  }
 
   disposers.push(ctx.tools.register(define({
     name: 'peer_list',
@@ -279,6 +289,23 @@ export async function registerTools (ctx, service, { log } = {}) {
       }
     }
   }
+}
+
+function toJsonSchema (parameters) {
+  const properties = {}
+  const required = []
+  for (const [name, spec] of Object.entries(parameters ?? {})) {
+    if (spec === null || typeof spec !== 'object') {
+      properties[name] = { type: 'string' }
+      continue
+    }
+    const { required: isRequired, ...rest } = spec
+    properties[name] = rest
+    if (isRequired === true) required.push(name)
+  }
+  const schema = { type: 'object', properties }
+  if (required.length > 0) schema.required = required
+  return schema
 }
 
 function renderPeers (peers) {

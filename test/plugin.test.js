@@ -119,6 +119,19 @@ function fakeResponse () {
   }
 }
 
+test('原始定义对象也能编译出合法的 parameters schema', async () => {
+  const app = await boot()
+  try {
+    const ask = app.tools.find((tool) => tool.name === 'peer_ask')
+    assert.equal(ask.parameters.type, 'object')
+    assert.deepEqual(ask.parameters.required, ['peer', 'text'])
+    assert.equal(ask.parameters.properties.peer.type, 'string')
+    assert.equal(ask.parameters.properties.wait_ms.type, 'number')
+  } finally {
+    await app.stop()
+  }
+})
+
 test('apply 注册 6 个工具、1 个命令、1 条本地路由', async () => {
   const app = await boot()
   try {
@@ -143,6 +156,8 @@ test('GET /cross-agent/state 走通了整条接线', async () => {
     assert.equal(body.state.self.name, '接线测试')
     assert.deepEqual(body.state.ports, { discovery: 45931, rpc: 45933 })
     assert.ok(Array.isArray(body.state.peers))
+    assert.ok(Array.isArray(body.state.paths.shares))
+    assert.deepEqual(body.state.capabilities.exposedTools, [])
   } finally {
     await app.stop()
   }

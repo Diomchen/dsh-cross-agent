@@ -52,7 +52,7 @@ async function buildConfig () {
  * 入口。整段包在 try/catch 里：插件坏掉时应该是一行警告，而不是让 DSH 起不来。
  */
 export async function apply (ctx, config = {}) {
-  const log = { warn: (message) => warn(ctx, message) }
+  const log = { warn: (message) => warn(ctx, message), note: (message) => note(ctx, message) }
 
   let service
   try {
@@ -113,11 +113,24 @@ function warn (ctx, message) {
   } catch {
     // 日志本身也不能让插件崩掉
   }
-  const file = path.join(process.env.DSH_HOME || path.join(process.env.HOME ?? '.', '.dsh'), 'dsh-cross-agent', 'bootstrap.log')
-  fs.appendFile(file, `${new Date().toISOString()} ${message}\n`, { mode: 0o600 })
-    .catch(() => fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 })
-      .then(() => fs.appendFile(file, `${new Date().toISOString()} ${message}\n`, { mode: 0o600 }))
-      .catch(() => {}))
+  appendBootstrap(message)
+}
+
+/** 只写进 bootstrap.log，不进宿主日志：这是"知道了"，不是"出事了"。 */
+function note (_ctx, message) {
+  appendBootstrap(message)
+}
+
+function appendBootstrap (message) {
+  const file = bootstrapPath()
+  const line = `${new Date().toISOString()} ${message}\n`
+  fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 })
+    .then(() => fs.appendFile(file, line, { mode: 0o600 }))
+    .catch(() => {})
+}
+
+function bootstrapPath () {
+  return path.join(process.env.DSH_HOME || path.join(process.env.HOME ?? '.', '.dsh'), 'dsh-cross-agent', 'bootstrap.log')
 }
 
 function describe (error) {
