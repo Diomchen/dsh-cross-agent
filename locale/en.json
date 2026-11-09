@@ -1,0 +1,20 @@
+{
+  "meta": {
+    "title": "Cross-agent",
+    "description": "Let DSH agents on two machines in the same LAN hand each other instructions and files — only admitted peers can talk, and confirm mode waits for you."
+  },
+  "panel": {
+    "title": "Cross-agent",
+    "peers": "Links",
+    "pending": "Waiting for you",
+    "transfers": "Transfers",
+    "audit": "Audit",
+    "emptyPeers": "No peers yet. Check that both machines are on the same subnet and that UDP 45881 is allowed.",
+    "emptyPending": "Nothing waiting for you.",
+    "emptyTransfers": "No files yet.",
+    "approve": "Allow",
+    "approveRemember": "Allow, remember 24h",
+    "reject": "Reject",
+    "connect": "Request link"
+  }
+}

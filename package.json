@@ -1,0 +1,55 @@
+{
+  "name": "dsh-cross-agent",
+  "version": "0.1.0",
+  "description": "局域网跨端 agent 会话：两台机器上的 DSH agent 互相下达指令、互传文件。 · LAN peer sessions for DeepSeek Harness.",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "src",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "README.md",
+    "CONTEXT.md"
+  ],
+  "scripts": {
+    "test": "node --test --test-concurrency=4 test/*.test.js",
+    "check": "node --check index.js && node --check client.js && node --test --test-concurrency=4 test/*.test.js",
+    "fake-peer": "node scripts/fake-peer.mjs"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "agent",
+    "lan",
+    "peer"
+  ],
+  "license": "MIT",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": false,
+      "inject": []
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "*",
+    "@deepseek-ai/dsh-tools": "*",
+    "@deepseek-ai/schemastery": "*"
+  }
+}

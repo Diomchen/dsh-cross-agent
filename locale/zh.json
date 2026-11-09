@@ -1,0 +1,20 @@
+{
+  "meta": {
+    "title": "跨端 agent",
+    "description": "让局域网里两台机器上的 DSH agent 互相下达指令、互传文件；放行过的才说话，需要审核的等你点头。"
+  },
+  "panel": {
+    "title": "跨端 agent",
+    "peers": "连接",
+    "pending": "待审核",
+    "transfers": "传输",
+    "audit": "审计",
+    "emptyPeers": "局域网上还没看到对端。确认两台机器在同一网段，防火墙放行 UDP 45881。",
+    "emptyPending": "没有等你点头的事。",
+    "emptyTransfers": "还没有文件往来。",
+    "approve": "同意",
+    "approveRemember": "同意并记住 24h",
+    "reject": "拒绝",
+    "connect": "请求连接"
+  }
+}
