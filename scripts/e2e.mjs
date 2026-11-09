@@ -42,7 +42,19 @@ function fakeCtx (workspace, replies) {
         return session
       }
     },
-    agents: {},
+    agents: { get: (id) => ({ id }) },
+    tools: {
+      async execute ({ calls, agent }) {
+        const call = calls[0]
+        return {
+          results: [{
+            callId: call.id,
+            isError: false,
+            content: [{ type: 'text', text: `B 执行了 ${call.name}(${call.arguments}) 于会话 ${agent.id.slice(0, 8)}` }]
+          }]
+        }
+      }
+    },
     sessionController: {
       async prompt (request) {
         const text = request.content?.[0]?.text ?? ''
@@ -105,7 +117,9 @@ async function main () {
     discoveryPort: DISCOVERY_B,
     port: RPC_B,
     registryDir,
-    displayName: 'B 机'
+    displayName: 'B 机',
+    exposedTools: ['echo'],
+    shareRoots: [path.join(TMP, 'ws-a', '.cross-agent', 'share')]
   })
 
   try {
@@ -174,6 +188,19 @@ async function main () {
     assert.equal(fetched.ok, true)
     assert.equal(await fs.readFile(fetched.path, 'utf8'), '# 给 A 的')
     console.log('✓ 共享目录拉取成功：', fetched.path)
+
+    // 6.5 跨端工具调用：白名单 + open 模式
+    await B.peers.setMode(A.identity.deviceId, 'open', { confirmed: true })
+    const exposed = await A.listPeerTools({ peer: B.identity.deviceId })
+    assert.deepEqual(exposed.tools, ['echo'])
+    const called = await A.callTool({ peer: B.identity.deviceId, tool: 'echo', args: { x: 1 } })
+    assert.equal(called.ok, true)
+    assert.match(called.text, /B 执行了 echo\(/)
+    await assert.rejects(
+      () => A.callTool({ peer: B.identity.deviceId, tool: 'bash' }),
+      /tool-not-exposed/
+    )
+    console.log('✓ 跨端工具：白名单内可调，白名单外被拒')
 
     // 7. 审计里能看到五类事实
     const kinds = new Set((await A.state()).audit.map((row) => row.kind))

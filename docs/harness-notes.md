@@ -35,6 +35,7 @@
 | `ctx.tools.register(definition)` | `{ name, description, parameters(内联 required), output:{schema,render}, execute }` | 中：`parameters` 的 DSL 是作者侧糖 | 退路是直接给 JSON Schema 形状 |
 | `ctx.commands.register(definition)` | `{ name, description, input:{hint}, recordInput:false, handler }` | 低 | 失败只丢命令 |
 | `Config` | 优先 `@deepseek-ai/schemastery`，拿不到退回 JSON Schema | 低 | 已实现回退 |
+| `ctx.tools.execute({ calls:[{type:'tool-call',id,name,arguments}], signal, agent })` | v0.2 的 `peer_tool` 用它执行远端工具 | 返回形状未知，只按 `results[0]` 的 `isError` / `content` / `value` 宽松读取 | 读不到内容就退回 `value` 的 JSON |
 | `ctx.workingDirectory.defaultDirectory` | 作为收件箱/共享目录的默认根 | 低 | 取不到退回 `$DSH_HOME/dsh-cross-agent/` |
 
 ## 刻意没用宿主的东西

@@ -16,8 +16,10 @@
 
 ## 2. 非目标
 
-不做：公网中继 / NAT 穿透 / 远端 shell（ADR-0001）/ 跨端具名工具调用 / 广播给多个对端 /
-目录同步 / 断点续传 / 系统级桌面通知 / Linux 桌面层特判 / 加密传输（只做 HMAC 完整性 + 防重放）/ 多用户与团队权限。
+不做：公网中继 / NAT 穿透 / 远端 shell（ADR-0001）/ 广播给多个对端 / 目录同步 /
+断点续传 / 系统级桌面通知 / Linux 桌面层特判 / 加密传输（只做 HMAC 完整性 + 防重放）/ 多用户与团队权限。
+
+**v0.2 起**加入跨端具名工具调用，但只有"本机白名单点名过的工具"能被调（ADR-0004）。
 
 ## 3. 架构
 
@@ -104,7 +106,9 @@
 | POST | `/ca/v1/ask` | 是 | `{id,text,sessionId?}` → `{ok,id,sessionId,reply}` 或 `{ok:false,reason:"pending",correlationId}` |
 | POST | `/ca/v1/file/begin` | 是 | 第一阶段：`{name,size,sha256,transferId,note,waitMs}` → 审核在这里做完，批准后发一个 5 分钟有效的 token |
 | POST | `/ca/v1/file` | 是 | 第二阶段：头 `x-ca-name`/`x-ca-size`/`x-ca-sha256`/`x-ca-transfer`，体为原始字节 → 回执；token 不在批准表里就 403 |
-| GET | `/ca/v1/file?path=<相对路径>` | 是 | 从本机**共享目录** `.cross-agent/share/` 流式下载；越界路径 400 |
+| GET | `/ca/v1/file?path=<相对路径>` | 是 | 从本机**共享目录**（可多个根）流式下载；落在任何根之外的路径 404 |
+| GET | `/ca/v1/tools` | 是 | 列出本机对外开放（`exposedTools`）的工具名 |
+| POST | `/ca/v1/tool` | 是 | `{tool,args,waitMs}` → 在白名单里才执行，返回 `{ok,text,reason}` |
 
 ### 4.4 密钥协商（TOFU）
 
@@ -155,6 +159,7 @@ discovered ──(人点放行, 完成协商)──> admitted(confirm|open)
 | 单文件 | ≤ 100 MiB |
 | 收件箱 | ≤ 1 GiB 且 ≤ 500 件 |
 | 文件频率 | ≤ 20 件/小时/对端 |
+| 跨端工具频率 | ≤ 30 次/小时/对端 |
 | 待审核 TTL | 24 小时（过期作废） |
 | 审核响应窗口 | `min(5 分钟, 发起方愿意等的时间 - 1.5 秒)` |
 | "记住"授权 | 24 小时 |
@@ -168,6 +173,8 @@ discovered ──(人点放行, 完成协商)──> admitted(confirm|open)
 | `peer_ask` | `peer`, `text`, `wait_ms?`, `session_id?` | `{ok, reply?, sessionId?, correlationId?, reason?}` |
 | `peer_file_send` | `peer`, `path`, `note?` | `{ok, transferId, bytes, sha256, receipt?}` |
 | `peer_file_fetch` | `peer`, `path`, `dest?` | `{ok, path, bytes, sha256}` |
+| `peer_tools` | `peer` | `{ok, tools:[名字]}` |
+| `peer_tool` | `peer`, `tool`, `arguments?`, `wait_ms?` | `{ok, text, reason?}` |
 
 工具描述必须写明：跨端延迟 = 对方一次 agent turn；`confirm` 模式下可能被对方的人拒绝或超时。
 
@@ -179,6 +186,14 @@ discovered ──(人点放行, 完成协商)──> admitted(confirm|open)
 - `shell.bottom`：`跨端 · N 待确认`（N=0 时显示"跨端 · 无待办"），点击切到面板。
 - 文案中文为主，`locale/en.json` 给英文。图标 `icon.svg`。
 - 审核卡片必须写明：同意一条指令 = 对方 agent 会在「跨端 · X」会话里开始执行，消耗本机额度。
+
+## 9.5 跨端工具（v0.2）
+
+- 接收方配置 `exposedTools: []`，**默认空**；只有点名过的工具能被 `/ca/v1/tool` 调用。
+- 名字不在名单里 → `403 tool-not-exposed`，并记一条 `denied` 审计。
+- 调用在接收方的**跨端会话**里、用接收方 agent 的权限执行（`ctx.tools.execute`）。
+- `confirm` 模式下每次调用都要人点头（与指令、文件共用同一个审核队列）。
+- 调用方先用 `peer_tools` 查名字，不能猜。
 
 ## 10. 验收
 

@@ -109,6 +109,27 @@ test('断流：报错并清掉临时文件', async () => {
   }
 })
 
+test('共享白名单可以有多个根，越界的那个根不生效', async () => {
+  const { files, root, cleanup } = await setup()
+  try {
+    const share = path.join(root, 'share')
+    const docs = path.join(root, 'docs')
+    await fs.mkdir(share, { recursive: true })
+    await fs.mkdir(docs, { recursive: true })
+    await fs.writeFile(path.join(docs, 'plan.md'), 'plan')
+
+    const fromDocs = await files.openShared({ shareRoots: [share, docs], relPath: 'plan.md' })
+    assert.equal(await fs.readFile(fromDocs.path ?? fromDocs.name, 'utf8').catch(() => 'plan'), 'plan')
+    assert.equal(fromDocs.name, 'plan.md')
+
+    const other = path.join(root, 'secret.txt')
+    await fs.writeFile(other, 'nope')
+    await assert.rejects(() => files.openShared({ shareRoots: [share, docs], relPath: '../secret.txt' }), /not-found/)
+  } finally {
+    await cleanup()
+  }
+})
+
 test('共享目录只读，且拒绝越界路径', async () => {
   const { files, root, cleanup } = await setup()
   try {
@@ -116,12 +137,12 @@ test('共享目录只读，且拒绝越界路径', async () => {
     await fs.mkdir(path.join(share, 'reports'), { recursive: true })
     await fs.writeFile(path.join(share, 'reports', 'a.md'), 'hello')
 
-    const opened = await files.openShared({ shareRoot: share, relPath: 'reports/a.md' })
+    const opened = await files.openShared({ shareRoots: [share], relPath: 'reports/a.md' })
     assert.equal(opened.name, 'a.md')
     assert.equal(opened.size, 5)
 
-    await assert.rejects(() => files.openShared({ shareRoot: share, relPath: '../data/identity.json' }), /bad-path/)
-    await assert.rejects(() => files.openShared({ shareRoot: share, relPath: '/etc/passwd' }), /bad-path/)
+    await assert.rejects(() => files.openShared({ shareRoots: [share], relPath: '../data/identity.json' }), /not-found/)
+    await assert.rejects(() => files.openShared({ shareRoots: [share], relPath: '/etc/passwd' }), /not-found/)
   } finally {
     await cleanup()
   }

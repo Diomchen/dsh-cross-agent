@@ -6,6 +6,7 @@
 - 一条连接一个**跨端会话**（标题 `跨端 · <对端名>`）：对方的指令落进它，你的 agent 的答复从它出去。
 - 两种权限：`open`（对方的消息与文件直接生效）与 `confirm`（每条消息、每个文件都等你点头）。
 - 文件双向传输，≤100 MiB，sha256 校验，收到回执才算送到；落到工作目录的 `.cross-agent/inbox/<对端名>/`。
+- 跨端**具名工具调用**（v0.2）：只有对方在配置里点名开放（`exposedTools`）的工具能被调，默认一个都不开。
 - 全部动作进审计（最近 1000 条）。
 
 词表见 [CONTEXT.md](CONTEXT.md)，规格见 [.scratch/cross-agent/SPEC.md](.scratch/cross-agent/SPEC.md)，决策见 [docs/adr/](docs/adr/)。
@@ -55,6 +56,8 @@ curl -s http://127.0.0.1:<DSH端口>/cross-agent/state | jq '.state.self'
 | `displayName` | 主机名 | 本机在局域网里显示的名字 |
 | `inboxDir` | `<工作目录>/.cross-agent/inbox` | 收到的文件落到哪 |
 | `shareDir` | `<工作目录>/.cross-agent/share` | 允许对端拉取的共享目录 |
+| `shareRoots` | `[]`（= 只有 `shareDir`） | 共享目录白名单，可以给多个根 |
+| `exposedTools` | `[]` | 允许对端通过 `peer_tool` 调用的本机工具名；**默认空 = 一个都不开** |
 
 环境变量：`DSH_CROSS_AGENT_HOME`（数据目录，默认 `$DSH_HOME/dsh-cross-agent`）、
 `DSH_CROSS_AGENT_DISCOVERY_PORT`、`DSH_CROSS_AGENT_PORT`。
@@ -80,7 +83,9 @@ $DSH_HOME/dsh-cross-agent/
 | `peer_list` | 谁在线、是否已放行、什么模式 |
 | `peer_ask` | 给对方 agent 下一条指令，等它答复（默认 120 秒，上限 600 秒） |
 | `peer_file_send` | 推一个文件过去（≤100 MiB） |
-| `peer_file_fetch` | 从对方 `.cross-agent/share/` 拉一个文件（只读，不能越界） |
+| `peer_file_fetch` | 从对方共享目录拉一个文件（只读，不能越界） |
+| `peer_tools` | 对方对外开放了哪些工具 |
+| `peer_tool` | 调用对方**白名单里**的一个工具（confirm 模式下每次都要对方点头） |
 
 `peer_ask` 的延迟是**对方一次 agent turn**，不是 RPC。对方 `confirm` 模式下它的人可能拒绝或超时；
 超时返回 `ok:false` + `correlationId`，之后可以带 `correlation_id` 再查一次。
@@ -98,6 +103,20 @@ $DSH_HOME/dsh-cross-agent/
 /cross-agent mode <名字> confirm
 /cross-agent block <名字>
 /cross-agent rename <新名字>
+```
+
+## 跨端工具：先想清楚再开
+
+`exposedTools` 是"工具名"级别的白名单，**不区分参数**。开放一个 `read_file`，就等于让对方能读那个工具能到的所有路径。
+所以：
+
+- 默认是空的，不是"没配置"；想用先在这里点名；
+- 别开 `bash` / `write` 这类"能改变本机状态"的工具，除非你确实想让对方改你的机器；
+- 对方试探白名单外的名字会被 `403` 并记进审计（`denied`）；
+- 名字先用 `peer_tools` 查，不要猜。
+
+```json
+{ "exposedTools": ["read_file"], "shareRoots": [".cross-agent/share", "docs"] }
 ```
 
 ## 排错
@@ -118,10 +137,12 @@ node --test test/*.test.js   # 35 个单测
 node scripts/e2e.mjs         # 单进程双实例端到端（真实 HTTP/HMAC + 文件落盘）
 ```
 
-## 边界（v0.1 不做）
+## 边界（不做）
 
-公网中继与 NAT 穿透、远端 shell（指令只投给对方的 agent，由它自己决定怎么做，见 ADR-0001）、
-跨端具名工具调用、广播给多个对端、目录同步、断点续传、系统级桌面通知、传输加密（只有 HMAC 完整性 + 防重放）。
+公网中继与 NAT 穿透、远端 shell（ADR-0001：指令只投给对方的 agent，由它自己决定怎么做）、
+广播给多个对端、目录同步、断点续传、系统级桌面通知、传输加密（只有 HMAC 完整性 + 防重放）。
+
+跨端工具调用在 v0.2 加入，但受 ADR-0004 的白名单约束。
 
 ## 许可证
 

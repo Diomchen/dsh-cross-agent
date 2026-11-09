@@ -23,6 +23,7 @@ export function createFiles ({
   log,
   inboxRoot,
   shareRoot,
+  shareRoots,
   now = () => Date.now()
 } = {}) {
   const chunkDir = path.join(inboxRoot, '.tmp')
@@ -38,8 +39,8 @@ export function createFiles ({
   async function ensureDirs () {
     await fsp.mkdir(inboxRoot, { recursive: true, mode: 0o700 })
     await fsp.mkdir(chunkDir, { recursive: true, mode: 0o700 })
-    if (typeof shareRoot === 'string' && shareRoot !== '') {
-      await fsp.mkdir(shareRoot, { recursive: true, mode: 0o700 })
+    for (const root of normalizeRoots(shareRoots ?? shareRoot)) {
+      await fsp.mkdir(root, { recursive: true, mode: 0o700 }).catch(() => {})
     }
   }
 
@@ -326,30 +327,37 @@ export function createFiles ({
    * 供对端拉取：只读**共享目录**（`.cross-agent/share/`）里的文件，绝不越界。
    * `relPath` 是相对共享目录的路径；`..`、绝对路径、符号链接逃逸一律拒绝。
    */
-  async function openShared ({ shareRoot, relPath }) {
+  async function openShared ({ shareRoots, relPath }) {
     if (typeof relPath !== 'string' || relPath.trim() === '') throw httpFail(400, 'bad-path')
     if (relPath.includes('\u0000')) throw httpFail(400, 'bad-path')
-    const rootReal = await fsp.realpath(shareRoot).catch(() => null)
-    if (rootReal === null) throw httpFail(404, 'no-share')
-    const wanted = path.resolve(rootReal, relPath)
-    if (wanted !== rootReal && !wanted.startsWith(rootReal + path.sep)) throw httpFail(400, 'bad-path')
-    let real
-    try {
-      real = await fsp.realpath(wanted)
-    } catch {
-      throw httpFail(404, 'not-found')
+    const roots = normalizeRoots(shareRoots)
+    if (roots.length === 0) throw httpFail(404, 'no-share')
+
+    for (const root of roots) {
+      const rootReal = await fsp.realpath(root).catch(() => null)
+      if (rootReal === null) continue
+      const wanted = path.resolve(rootReal, relPath)
+      if (!contained(rootReal, wanted)) continue
+      let real
+      try {
+        real = await fsp.realpath(wanted)
+      } catch {
+        continue
+      }
+      if (!contained(rootReal, real)) continue
+      const stat = await fsp.stat(real).catch(() => null)
+      if (stat === null || !stat.isFile()) continue
+      if (stat.size > MAX_FILE_BYTES) throw httpFail(413, 'too-large')
+      const { sha256 } = await hashFile(real)
+      return {
+        stream: fs.createReadStream(real),
+        name: path.basename(real),
+        size: stat.size,
+        sha256,
+        root
+      }
     }
-    if (real !== rootReal && !real.startsWith(rootReal + path.sep)) throw httpFail(400, 'bad-path')
-    const stat = await fsp.stat(real).catch(() => null)
-    if (stat === null || !stat.isFile()) throw httpFail(404, 'not-found')
-    if (stat.size > MAX_FILE_BYTES) throw httpFail(413, 'too-large')
-    const { sha256 } = await hashFile(real)
-    return {
-      stream: fs.createReadStream(real),
-      name: path.basename(real),
-      size: stat.size,
-      sha256
-    }
+    throw httpFail(404, 'not-found')
   }
 
   return {
@@ -360,8 +368,8 @@ export function createFiles ({
     hashFile,
     inboxStats,
     dirFor,
-    get shareRoot () {
-      return shareRoot
+    get shareRoots () {
+      return normalizeRoots(shareRoots ?? shareRoot)
     },
     transferId: () => crypto.randomUUID(),
     async recent (limit = 50) {
@@ -381,6 +389,25 @@ export function createFiles ({
       }
     }
   }
+}
+
+/** 白名单里的根目录：绝对路径直接用，相对路径相对工作目录。重复的收掉。 */
+function normalizeRoots (value) {
+  const list = Array.isArray(value) ? value : []
+  const seen = new Set()
+  const roots = []
+  for (const entry of list) {
+    if (typeof entry !== 'string' || entry.trim() === '') continue
+    const resolved = path.resolve(entry)
+    if (seen.has(resolved)) continue
+    seen.add(resolved)
+    roots.push(resolved)
+  }
+  return roots
+}
+
+function contained (root, candidate) {
+  return candidate === root || candidate.startsWith(root + path.sep)
 }
 
 function httpFail (status, reason) {

@@ -49,7 +49,10 @@ export async function createService (ctx, config = {}) {
   await approvals.open()
 
   const inboxRoot = config.inboxDir || path.join(workspace ?? home, '.cross-agent', 'inbox')
-  const shareRoot = config.shareDir || path.join(workspace ?? home, '.cross-agent', 'share')
+  const shareRoots = resolveShareRoots(config, workspace ?? home)
+  const exposedTools = Array.isArray(config.exposedTools)
+    ? [...new Set(config.exposedTools.filter((name) => typeof name === 'string' && name !== ''))]
+    : []
 
   let rpcClient = null
   const peers = createPeers({
@@ -81,7 +84,15 @@ export async function createService (ctx, config = {}) {
     log
   })
 
-  const files = createFiles({ store, rpc: rpcClient, audit, log, inboxRoot, shareRoot })
+  const files = createFiles({
+    store,
+    rpc: rpcClient,
+    audit,
+    log,
+    inboxRoot,
+    shareRoot: shareRoots[0] ?? path.join(workspace ?? home, '.cross-agent', 'share'),
+    shareRoots
+  })
   const session = createSessionBridge({ ctx, store, log })
 
   const rpcServer = createRpcServer({
@@ -130,6 +141,18 @@ export async function createService (ctx, config = {}) {
       'GET /ca/v1/file': {
         auth: 'key',
         handler: async ({ url, res, auth }) => handleFileRead(url, res, auth)
+      },
+      'GET /ca/v1/tools': {
+        auth: 'key',
+        handler: async ({ auth }) => {
+          const peer = peers.get(auth.deviceId)
+          if (peer === null || peer.state !== 'admitted') throw httpFail(403, 'not-admitted')
+          return { ok: true, tools: exposedTools.map((name) => ({ name })) }
+        }
+      },
+      'POST /ca/v1/tool': {
+        auth: 'key',
+        handler: async ({ body, auth }) => handleToolCall(body, auth)
       }
     }
   }
@@ -266,7 +289,7 @@ export async function createService (ctx, config = {}) {
     const peer = peers.get(peerId)
     if (peer === null || peer.state !== 'admitted') throw httpFail(403, 'not-admitted')
     const relPath = new URLSearchParams(url.search).get('path') ?? ''
-    const opened = await files.openShared({ shareRoot, relPath })
+    const opened = await files.openShared({ shareRoots, relPath })
     res.writeHead(200, {
       'content-type': 'application/octet-stream',
       'content-length': String(opened.size),
@@ -282,6 +305,83 @@ export async function createService (ctx, config = {}) {
       outcome: 'served',
       detail: `${opened.name} ${opened.size} bytes`
     })
+  }
+
+  /**
+   * 跨端工具调用：只有本机 `exposedTools` 里点名过的工具能被调。
+   * 默认是空列表 —— 装上这个插件不等于把本机的能力簿打开。
+   */
+  async function handleToolCall (body, auth) {
+    const peerId = auth.deviceId
+    const peer = peers.get(peerId)
+    if (peer === null || peer.state !== 'admitted') throw httpFail(403, 'not-admitted')
+
+    const tool = typeof body?.tool === 'string' ? body.tool : ''
+    if (tool === '') throw httpFail(400, 'missing-tool')
+    if (!exposedTools.includes(tool)) {
+      await audit.record({
+        peerId,
+        peerName: peer.name,
+        kind: 'denied',
+        outcome: 'tool-not-exposed',
+        detail: tool
+      })
+      throw httpFail(403, 'tool-not-exposed')
+    }
+
+    const budget = clampWait(body?.waitMs)
+    const decision = await review('tool', peer, {
+      summary: `${tool}(${shortArgs(body?.args)})`,
+      payload: { tool, args: body?.args ?? null },
+      timeoutMs: reviewTimeout(budget)
+    })
+    if (decision !== 'approved') return { ok: false, reason: decision }
+
+    const result = await runPeerTool(peer, tool, body?.args ?? {}, budget)
+    await audit.record({
+      peerId,
+      peerName: peer.name,
+      kind: 'instruction',
+      outcome: result.ok ? 'tool-ok' : 'tool-failed',
+      detail: `${tool}${result.error ? ` · ${result.error}` : ''}`
+    })
+    return result
+  }
+
+  async function runPeerTool (peer, tool, args, budget) {
+    const tools = ctx?.tools
+    if (typeof tools?.execute !== 'function') throw httpFail(501, 'tools-unavailable')
+    const agent = await session.agentFor(peer)
+    if (agent === undefined || agent === null) throw httpFail(409, 'session-not-ready')
+
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), budget)
+    try {
+      const batch = await tools.execute({
+        calls: [{
+          type: 'tool-call',
+          id: crypto.randomUUID(),
+          name: tool,
+          arguments: JSON.stringify(args ?? {})
+        }],
+        signal: controller.signal,
+        agent
+      })
+      const first = Array.isArray(batch?.results) ? batch.results[0] : undefined
+      if (first === undefined) return { ok: false, reason: 'no-result' }
+      const isError = first.isError === true
+      const text = textFromResult(first)
+      return {
+        ok: !isError,
+        isError,
+        text: text.slice(0, 16 * 1024),
+        error: isError ? (first?.error?.message ?? 'tool-error') : ''
+      }
+    } catch (error) {
+      return { ok: false, reason: error?.message ?? String(error) }
+    } finally {
+      clearTimeout(timer)
+    }
   }
 
   /** 审核闸：open 或有 24h 授权直接过；confirm 入队并等 5 分钟。 */
@@ -315,7 +415,8 @@ export async function createService (ctx, config = {}) {
         discovery: discovery.port || discoveryPort,
         rpc: rpcServer.port || rpcPort
       },
-      paths: { inbox: inboxRoot, share: shareRoot },
+      paths: { inbox: inboxRoot, share: shareRoots[0] ?? null, shares: shareRoots },
+      capabilities: { exposedTools },
       peers: peers.list({ discovery }),
       pending: approvals.list({ status: 'pending' }).map((item) => ({
         id: item.id,
@@ -455,6 +556,47 @@ export async function createService (ctx, config = {}) {
     return files.fetch({ peerId: target.deviceId, peerName: target.name, remotePath, destDir: dest })
   }
 
+  async function listPeerTools ({ peer: ref }) {
+    const target = resolvePeer(ref)
+    if (!discovery.isOnline(target.deviceId)) throw new Error('这个对端现在不在线')
+    const response = await rpcClient.call(target.deviceId, 'GET', '/ca/v1/tools', undefined, { timeoutMs: 10_000 })
+    return { ok: response?.ok === true, tools: Array.isArray(response?.tools) ? response.tools.map((row) => row.name) : [] }
+  }
+
+  async function callTool ({ peer: ref, tool, args, waitMs }) {
+    const target = resolvePeer(ref)
+    if (typeof tool !== 'string' || tool === '') throw new Error('tool 不能为空')
+    if (!discovery.isOnline(target.deviceId)) throw new Error('这个对端现在不在线')
+    const gate = limits.toolHour.allow(target.deviceId)
+    if (!gate.ok) throw new Error('调这个对端的工具太频繁，稍后再试')
+
+    const budget = clampWait(waitMs)
+    const response = await rpcClient.call(target.deviceId, 'POST', '/ca/v1/tool', {
+      tool,
+      args: args ?? {},
+      waitMs: budget
+    }, { timeoutMs: budget + 15_000 })
+
+    if (response?.ok === true) {
+      await audit.record({
+        peerId: target.deviceId,
+        peerName: target.name,
+        kind: 'instruction',
+        outcome: 'tool-ok',
+        detail: tool
+      })
+      return { ok: true, text: response.text ?? '' }
+    }
+    await audit.record({
+      peerId: target.deviceId,
+      peerName: target.name,
+      kind: 'instruction',
+      outcome: 'tool-failed',
+      detail: `${tool} · ${response?.reason ?? response?.error ?? 'unknown'}`
+    })
+    return { ok: false, reason: response?.reason ?? response?.error ?? 'unknown', text: response?.text ?? '' }
+  }
+
   function listPeers () {
     return peers.list({ discovery }).map((row) => ({
       name: row.name,
@@ -516,6 +658,8 @@ export async function createService (ctx, config = {}) {
     ask,
     sendFile,
     fetchFile,
+    callTool,
+    listPeerTools,
     listPeers,
     start,
     dispose,
@@ -590,6 +734,47 @@ function clampWait (value) {
 }
 
 const OFFLINE_CODES = new Set(['ECONNREFUSED', 'EHOSTUNREACH', 'ENETUNREACH', 'ECONNRESET', 'ETIMEDOUT', 'EPIPE'])
+
+function resolveShareRoots (config, base) {
+  const list = Array.isArray(config.shareRoots) && config.shareRoots.length > 0
+    ? config.shareRoots
+    : [config.shareDir || path.join(base, '.cross-agent', 'share')]
+  const resolved = []
+  for (const entry of list) {
+    if (typeof entry !== 'string' || entry.trim() === '') continue
+    const value = path.isAbsolute(entry) ? entry : path.resolve(base, entry)
+    if (!resolved.includes(value)) resolved.push(value)
+  }
+  if (resolved.length === 0) resolved.push(path.join(base, '.cross-agent', 'share'))
+  return resolved
+}
+
+function shortArgs (args) {
+  try {
+    const text = JSON.stringify(args ?? {})
+    return text.length > 80 ? `${text.slice(0, 77)}...` : text
+  } catch {
+    return '…'
+  }
+}
+
+function textFromResult (result) {
+  const content = Array.isArray(result?.content) ? result.content : []
+  const text = content
+    .filter((block) => block?.type === 'text' && typeof block.text === 'string')
+    .map((block) => block.text)
+    .join('\n')
+    .trim()
+  if (text !== '') return text
+  if (result?.value !== undefined) {
+    try {
+      return JSON.stringify(result.value).slice(0, 16 * 1024)
+    } catch {
+      return ''
+    }
+  }
+  return ''
+}
 
 function safeName (value) {
   const name = safeFileName(typeof value === 'string' ? value : '')

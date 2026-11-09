@@ -39,7 +39,9 @@ async function buildConfig () {
       port: z.number().default(45883).description('RPC 与文件传输端口。'),
       displayName: z.string().default('').description('本机在局域网里显示的名字；留空用主机名。'),
       inboxDir: z.string().default('').description('收到的文件落到哪；留空用 <工作目录>/.cross-agent/inbox。'),
-      shareDir: z.string().default('').description('允许对端拉取的共享目录；留空用 <工作目录>/.cross-agent/share。')
+      shareDir: z.string().default('').description('允许对端拉取的共享目录；留空用 <工作目录>/.cross-agent/share。'),
+      shareRoots: z.array(z.string()).default([]).description('共享目录白名单（多个根）。相对路径相对工作目录；留空则只有 shareDir。'),
+      exposedTools: z.array(z.string()).default([]).description('允许对端通过 peer_tool 调用的本机工具名。默认空 = 不开放任何工具。')
     })
   } catch {
     return { type: 'object', additionalProperties: false, properties: shape }

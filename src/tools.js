@@ -205,6 +205,71 @@ export async function registerTools (ctx, service, { log } = {}) {
     }
   })))
 
+  disposers.push(ctx.tools.register(define({
+    name: 'peer_tools',
+    description: '看另一台机器**当前对外开放**了哪些工具（对方在配置里点名过的才列得出来）。想用 peer_tool 调东西之前先用它确认名字，不要猜。',
+    parameters: {
+      peer: { type: 'string', required: true, description: '对方的显示名或 deviceId。' }
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          ok: { type: 'boolean', required: true },
+          tools: { type: 'array', required: true, items: { type: 'string' } }
+        }
+      },
+      render: (_args, value) => [{
+        type: 'text',
+        text: value.tools.length === 0 ? '对方没有对外开放任何工具。' : `对方开放：${value.tools.join('、')}`
+      }]
+    },
+    isConcurrencySafe: () => true,
+    async execute (args) {
+      const result = await service.listPeerTools({ peer: args.peer })
+      return { ok: result.ok === true, tools: result.tools }
+    }
+  })))
+
+  disposers.push(ctx.tools.register(define({
+    name: 'peer_tool',
+    description: '调用另一台机器上的一个工具。只有对方在配置里点名开放（exposedTools）的工具能调，名字先用 peer_tools 查；调用在对方那个跨端会话里、用对方的权限执行。对方是 confirm 模式时，每次调用都要它的人点头，可能被拒绝或超时（返回 ok:false）。不要用它去猜路径或试权限——被拒会记进对方的审计。',
+    parameters: {
+      peer: { type: 'string', required: true, description: '对方的显示名或 deviceId。' },
+      tool: { type: 'string', required: true, description: '对方开放的工具名，例如 read_file。' },
+      arguments: { type: 'object', additionalProperties: true, description: '传给那个工具的参数对象，形状按对方工具的 schema。' },
+      wait_ms: { type: 'number', description: '最多等多久，默认 120000，上限 600000。' }
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          ok: { type: 'boolean', required: true },
+          text: { type: 'string' },
+          reason: { type: 'string' }
+        }
+      },
+      render: (_args, value) => [{
+        type: 'text',
+        text: value.ok === true
+          ? (value.text === '' ? '（对方工具没有输出）' : value.text)
+          : `没有被执行：${value.reason === '' ? 'unknown' : value.reason}`
+      }]
+    },
+    isConcurrencySafe: () => false,
+    async execute (args) {
+      const result = await service.callTool({
+        peer: args.peer,
+        tool: args.tool,
+        args: args.arguments,
+        waitMs: args.wait_ms
+      })
+      return { ok: result.ok === true, text: result.text ?? '', reason: result.reason ?? '' }
+    }
+  })))
+
   return () => {
     for (const dispose of disposers) {
       try {

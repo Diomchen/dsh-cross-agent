@@ -119,10 +119,12 @@ function fakeResponse () {
   }
 }
 
-test('apply 注册 4 个工具、1 个命令、1 条本地路由', async () => {
+test('apply 注册 6 个工具、1 个命令、1 条本地路由', async () => {
   const app = await boot()
   try {
-    assert.deepEqual(app.tools.map((tool) => tool.name).sort(), ['peer_ask', 'peer_file_fetch', 'peer_file_send', 'peer_list'])
+    assert.deepEqual(app.tools.map((tool) => tool.name).sort(), [
+      'peer_ask', 'peer_file_fetch', 'peer_file_send', 'peer_list', 'peer_tool', 'peer_tools'
+    ])
     assert.deepEqual(app.commands.map((command) => command.name), ['cross-agent'])
     assert.ok(app.routes.has('/cross-agent'))
   } finally {
@@ -184,7 +186,7 @@ test('非回环来源一律 403', async () => {
 test('停用后工具、命令、路由都被摘掉', async () => {
   const app = await boot()
   try {
-    assert.equal(app.tools.length, 4)
+    assert.equal(app.tools.length, 6)
     app.stop().then(() => {})
     await new Promise((resolve) => setTimeout(resolve, 200))
     assert.equal(app.tools.length, 0)

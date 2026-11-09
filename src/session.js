@@ -193,7 +193,14 @@ export function createSessionBridge ({ ctx, store, log, now = () => Date.now() }
     }
   }
 
-  return { ensure, deliver, queueNotice, arm }
+  /** 跨端工具调用要一个 Agent，而不只是会话 id：拿不到就让调用方明确失败。 */
+  async function agentFor (peer) {
+    const sessionId = await ensure(peer)
+    const agent = controllers().agents?.get?.(sessionId)
+    return agent ?? null
+  }
+
+  return { ensure, agentFor, deliver, queueNotice, arm }
 }
 
 function buildText (notices, text) {

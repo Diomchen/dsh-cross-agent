@@ -72,6 +72,7 @@ export function createLimiters ({ now = () => Date.now() } = {}) {
     messageDay: createRateLimiter({ windowMs: 24 * 60 * 60 * 1000, max: 200, now }),
     fileHour: createRateLimiter({ windowMs: 60 * 60 * 1000, max: 20, now }),
     fileFetchHour: createRateLimiter({ windowMs: 60 * 60 * 1000, max: 20, now }),
+    toolHour: createRateLimiter({ windowMs: 60 * 60 * 1000, max: 30, now }),
     clear () {
       for (const value of Object.values(this)) {
         if (value && typeof value.clear === 'function') value.clear()

@@ -49,6 +49,12 @@ $DSH_HOME/dsh-cross-agent/instances/<deviceId>.json 已写入
 - `output.schema` 用的是"值 schema DSL"：必填写在属性上，**没有**顶层 `required` 数组
   （写错会得到 `unsupported JSON schema: schema.required is not supported`）。
 
+## 2.5 v0.2 追加
+
+- `peer_tool` / `peer_tools`：白名单内可调、名单外 `403 tool-not-exposed`（端到端覆盖）；
+- `shareRoots` 多根白名单：落在某个根里才可读，`..` 越界一律 404（单测覆盖）；
+- 单测 41 个全绿。
+
 ## 3. 没验证到的（诚实清单）
 
 | 项 | 为什么 | 影响 |
@@ -56,6 +62,7 @@ $DSH_HOME/dsh-cross-agent/instances/<deviceId>.json 已写入
 | 面板与状态条的渲染 | `Slots.listSubTree` 在这个 Host 上超时（没有可用的 Client inspect 通道） | UI 代码按槽位契约写，未经肉眼确认 |
 | 两台**物理**机器互连 | 只有一台机器；用双实例 + 本机注册表替代 | UDP 广播、防火墙放行未经真机验证 |
 | `peer_ask` 打真实 DSH 会话 | 端到端里的 `sessionController` 是假的 | `src/session.js` 的字段名仍是"按契约写"，见 harness-notes 的待验表 |
+| `peer_tool` 打真实工具 | 端到端里的 `ctx.tools.execute` 是假的 | 只按 `results[0]` 的 `isError` / `content` / `value` 宽松读取 |
 | macOS/Windows 防火墙弹窗 | 需要人在界面上点 | 已在 README 排错表里写明 |
 
 ## 4. 一个已知的安装期坑
