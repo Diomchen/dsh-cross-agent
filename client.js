@@ -12,6 +12,9 @@ window.__ModuleLoader__.load({
     const { useCallback, useEffect, useState } = React
 
     const POLL_MS = 3000
+    const PANEL_ID = 'cross-agent'
+    /** 侧栏与状态条都要能打开面板；`ctx.layout` 只有在这里拿得到。 */
+    let runtime = null
 
     async function call (body) {
       const response = await fetch('/cross-agent/action', {
@@ -265,6 +268,18 @@ window.__ModuleLoader__.load({
       )
     }
 
+    function CrossAgentIcon (owner = {}) {
+      const size = Number.isFinite(owner?.size) ? owner.size : 16
+      const stroke = { stroke: 'currentColor', strokeWidth: 4, fill: 'none', strokeLinecap: 'round' }
+      return h('svg', { width: size, height: size, viewBox: '0 0 64 64', role: 'img', 'aria-hidden': 'true' },
+        h('rect', { x: 4, y: 16, width: 20, height: 32, rx: 7, ...stroke }),
+        h('rect', { x: 40, y: 16, width: 20, height: 32, rx: 7, ...stroke }),
+        h('path', { d: 'M24 32h16', ...stroke }),
+        h('circle', { cx: 14, cy: 32, r: 3.2, fill: 'currentColor' }),
+        h('circle', { cx: 50, cy: 32, r: 3.2, fill: 'currentColor' })
+      )
+    }
+
     function StatusBar () {
       const { state } = useCrossAgent()
       const count = state?.pending?.length ?? 0
@@ -275,15 +290,16 @@ window.__ModuleLoader__.load({
         tabIndex: 0,
         onClick: () => {
           try {
-            window.__dshCrossAgentOpen = true
+            runtime?.layout?.selectPanel?.(PANEL_ID)
           } catch {
-            // ignore
+            // 没有 layout 就只是不跳转
           }
         }
       }, h('span', { style: S.dot(state !== null) }), h('span', null, label))
     }
 
     function apply (ctx) {
+      runtime = ctx
       const disposers = []
       const register = (options, Component) => {
         try {
@@ -295,6 +311,7 @@ window.__ModuleLoader__.load({
       try {
         register({ name: 'main', id: 'cross-agent-panel', key: 'cross-agent', order: 60 }, Panel)
         register({ name: 'shell.bottom', id: 'cross-agent-status', order: 20 }, StatusBar)
+        register({ name: 'sidebar.panellist', id: 'cross-agent', order: 40, label: () => '跨端 agent' }, CrossAgentIcon)
       } catch (error) {
         console.warn('[dsh-cross-agent] 初始化失败', error)
       }

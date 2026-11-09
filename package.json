@@ -43,8 +43,11 @@
     },
     "client": {
       "platform": "web",
-      "immediately": false,
-      "inject": []
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-client-locale"
+      ]
     }
   },
   "peerDependencies": {

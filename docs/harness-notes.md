@@ -22,6 +22,11 @@
   `duplicate prefix route`，而且停用插件时不会自动回收；
 - `apply` 里注册的一切（工具、命令、路由）都要自己塞进 `ctx.effect` 的卸载函数，
   否则重装会把旧 handler 留在进程里。
+- **`dsh.client.inject` 不能留空**：空数组时模块会被加载，但 `ctx.slots` 拿不到，
+  注册静默失败（我一开始就是这样，`main` 槽位里空空如也）。至少要声明
+  `@deepseek-ai/dsh-client-ui-slots`，否则要用的服务不会被注入。
+- 侧栏入口在 `sidebar.panellist` 注册：`{ id, order, label }`，**id 必须等于 `main` 的 key**，
+  侧栏自己渲染按钮并 `selectPanel(id)`；组件只画图标，收到的 owner props 是 `{ size, active }`。
 
 ## 待验（还没在真实 DSH 进程里逐字段确认）
 

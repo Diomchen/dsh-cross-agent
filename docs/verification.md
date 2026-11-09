@@ -59,7 +59,7 @@ $DSH_HOME/dsh-cross-agent/instances/<deviceId>.json 已写入
 
 | 项 | 为什么 | 影响 |
 |---|---|---|
-| 面板与状态条的渲染 | `Slots.listSubTree` 在这个 Host 上超时（没有可用的 Client inspect 通道） | UI 代码按槽位契约写，未经肉眼确认 |
+| 面板「长什么样」 | 只看得到槽位注册，看不到像素：配色、空状态、长名字截断都还没人眼确认 | 注册层面已验证：`main`→`cross-agent`、`shell.bottom`→`cross-agent-status`、`sidebar.panellist`→`cross-agent` 三个 occupant 都是 `active: true` |
 | 两台**物理**机器互连 | 只有一台机器；用双实例 + 本机注册表替代 | UDP 广播、防火墙放行未经真机验证 |
 | `peer_ask` 打真实 DSH 会话 | 端到端里的 `sessionController` 是假的 | `src/session.js` 的字段名仍是"按契约写"，见 harness-notes 的待验表 |
 | `peer_tool` 打真实工具 | 端到端里的 `ctx.tools.execute` 是假的 | 只按 `results[0]` 的 `isError` / `content` / `value` 宽松读取 |
