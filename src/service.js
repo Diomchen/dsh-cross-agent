@@ -430,7 +430,8 @@ export async function createService (ctx, config = {}) {
         expiresAt: item.expiresAt
       })),
       transfers: await files.recent(50),
-      audit: await audit.recent(100)
+      // 旧版本把"插件启动"也记进审计，那些行不是"谁对我们做了什么"，不回放到面板上。
+      audit: (await audit.recent(100)).filter((row) => row.outcome !== 'started')
     }
   }
 
