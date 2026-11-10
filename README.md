@@ -81,7 +81,7 @@ $DSH_HOME/dsh-cross-agent/
 | 工具 | 做什么 |
 |---|---|
 | `peer_list` | 谁在线、是否已放行、什么模式 |
-| `peer_ask` | 给对方 agent 下一条指令，等它答复（默认 120 秒，上限 600 秒） |
+| `peer_ask` | 给对方 agent 下一条指令，等它答复（默认 120 秒，上限 600 秒）；带 `session_id` 可投到对方为你建的会话 |
 | `peer_file_send` | 推一个文件过去（≤100 MiB） |
 | `peer_file_fetch` | 从对方共享目录拉一个文件（只读，不能越界） |
 | `peer_tools` | 对方对外开放了哪些工具 |

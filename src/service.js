@@ -196,11 +196,12 @@ export async function createService (ctx, config = {}) {
     const day = limits.messageDay.allow(peerId)
     if (!day.ok) throw httpFail(429, 'rate-limited')
 
+    const target = await resolveAskTarget(peerId, body?.sessionId)
     const correlationId = crypto.randomUUID()
     const budget = clampWait(body?.waitMs)
     const decision = await review('ask', peer, {
-      summary: firstLine(text),
-      payload: { text, correlationId },
+      summary: target.sessionId === null ? firstLine(text) : `→ ${target.label}：${firstLine(text)}`,
+      payload: { text, correlationId, sessionId: target.sessionId },
       timeoutMs: reviewTimeout(budget)
     })
 
@@ -209,19 +210,47 @@ export async function createService (ctx, config = {}) {
       if (item !== undefined) {
         approvals.onResolve(item.id, (decided) => {
           if (decided.status !== 'approved') return
-          deliverAndStore(peer, text, correlationId).catch(() => {})
+          deliverAndStore(peer, text, correlationId, { sessionId: target.sessionId }).catch(() => {})
         })
       }
       return { ok: false, reason: 'awaiting-review', correlationId }
     }
     if (decision !== 'approved') return { ok: false, reason: decision, correlationId }
 
-    const result = await deliverAndStore(peer, text, correlationId, { waitMs: budget })
+    const result = await deliverAndStore(peer, text, correlationId, { waitMs: budget, sessionId: target.sessionId })
     return { ok: true, correlationId, ...result }
   }
 
-  async function deliverAndStore (peer, text, correlationId, { waitMs = ASK_WAIT_MAX_MS } = {}) {
-    const outcome = await session.deliver(peer, text, { waitMs })
+  /**
+   * 决定这条指令投到哪儿。
+   *
+   * 不给 `sessionId` → 这条连接的固定跨端会话（历史行为）。
+   * 给了 → 只允许投到**这个对端自己建出来的**会话。没有这层限制，被放行的对端
+   * 就能往本机任意会话（包括人自己的聊天）里塞话——那不是"跨端会话"，那是偷听。
+   */
+  async function resolveAskTarget (peerId, requested) {
+    if (requested === undefined || requested === null || requested === '') return { sessionId: null, label: '' }
+    if (typeof requested !== 'string') throw httpFail(400, 'bad-session')
+    const record = await store.get('sessions', requested)
+    if (record === null || record === undefined) throw httpFail(403, 'session-not-allowed')
+    if (record.peerId !== peerId) {
+      await audit.record({ peerId, kind: 'denied', outcome: 'session-not-mine', detail: requested })
+      throw httpFail(403, 'session-not-allowed')
+    }
+    try {
+      if (typeof ctx?.sessions?.get === 'function') {
+        const live = await ctx.sessions.get(requested)
+        if (live === undefined || live === null) throw httpFail(404, 'session-not-found')
+      }
+    } catch (error) {
+      if (error?.status === 404) throw error
+      // 宿主读不出来时不拦：真投不进去会在 prompt 那一步报错
+    }
+    return { sessionId: requested, label: record.title || record.path || requested }
+  }
+
+  async function deliverAndStore (peer, text, correlationId, { waitMs = ASK_WAIT_MAX_MS, sessionId = null } = {}) {
+    const outcome = await session.deliver(peer, text, sessionId === null ? { waitMs } : { waitMs, sessionId })
     await audit.record({
       peerId: peer.deviceId,
       peerName: peer.name,
@@ -415,6 +444,20 @@ export async function createService (ctx, config = {}) {
     })
 
     const created = await createSessionIn(dir, title, resolved.preset)
+    try {
+      await store.put('sessions', created.sessionId, {
+        sessionId: created.sessionId,
+        peerId,
+        peerName: peer.name,
+        path: dir,
+        workspaceId: created.workspaceId,
+        title: created.title,
+        permission: resolved.preset,
+        createdAt: Date.now()
+      })
+    } catch (error) {
+      log.warn(`[dsh-cross-agent] 记录远端会话失败：${error?.message ?? error}`)
+    }
     await audit.record({
       peerId,
       peerName: peer.name,

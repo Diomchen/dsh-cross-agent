@@ -164,10 +164,14 @@ export function createSessionBridge ({ ctx, store, log, now = () => Date.now() }
     return undefined
   }
 
-  async function deliver (peer, text, { waitMs = ASK_WAIT_DEFAULT_MS } = {}) {
+  /**
+   * 投一条指令。`sessionId` 给了就投到那一条（远端自己建出来的会话），
+   * 没给就投到这条连接的固定跨端会话（`ensure()` 会在第一次时把它建出来）。
+   */
+  async function deliver (peer, text, { waitMs = ASK_WAIT_DEFAULT_MS, sessionId } = {}) {
     arm()
-    const sessionId = await ensure(peer)
-    return serial(sessionId, () => deliverNow(peer, sessionId, text, waitMs))
+    const target = typeof sessionId === 'string' && sessionId !== '' ? sessionId : await ensure(peer)
+    return serial(target, () => deliverNow(peer, target, text, waitMs))
   }
 
   async function deliverNow (peer, sessionId, text, waitMs) {

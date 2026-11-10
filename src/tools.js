@@ -93,10 +93,11 @@ export async function registerTools (ctx, service, { log } = {}) {
 
   disposers.push(ctx.tools.register(define({
     name: 'peer_ask',
-    description: '给另一台机器上的 agent 下一条指令，并等它回答。文字会被投进对方那台机器上标题为「跨端 · 你的名字」的会话，由对方的 agent 自己决定怎么做；本插件不会在对方机器上执行 shell。对方要跑完一次 agent turn 才有答复，通常几秒到几分钟。对方是 confirm 模式时，它的人可能拒绝或超时（返回 ok:false）。超时后可以带 correlation_id 再查一次结果。',
+    description: '给另一台机器上的 agent 下一条指令，并等它回答。文字默认投进对方那台机器上标题为「跨端 · 你的名字」的会话；带上 session_id 则投进对方**为你建出来的**那条会话（见 peer_session_create）。由对方的 agent 自己决定怎么做；本插件不会在对方机器上执行 shell。对方要跑完一次 agent turn 才有答复，通常几秒到几分钟。对方是 confirm 模式时，它的人可能拒绝或超时（返回 ok:false）。超时后可以带 correlation_id 再查一次结果。',
     parameters: {
       peer: { type: 'string', required: true, description: '对方的显示名或 deviceId。先用 peer_list 查。' },
       text: { type: 'string', required: true, description: '要对方做什么，或要问它什么。一段话，最多 8 KiB。' },
+      session_id: { type: 'string', description: '投到对方哪条会话：填 peer_session_create 返回的 id。不填就投到这条连接的固定跨端会话。对方只接受**它自己为你建出来的**会话 id，别人的会话一律拒绝。' },
       wait_ms: { type: 'number', description: '最多等多久，默认 120000，上限 600000。' },
       correlation_id: { type: 'string', description: '复查之前那次投递的结果；给了它就不重新投递（此时 peer/text 可省略）。' }
     },
@@ -125,6 +126,7 @@ export async function registerTools (ctx, service, { log } = {}) {
         peer: args.peer,
         text: args.text,
         waitMs: args.wait_ms,
+        sessionId: args.session_id,
         correlationId: args.correlation_id
       })
       return {

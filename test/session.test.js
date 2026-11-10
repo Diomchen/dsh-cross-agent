@@ -69,6 +69,26 @@ test('把指令投进会话并拿回答复', async () => {
   }
 })
 
+test('给了 sessionId 就投到那一条，不再自己建会话', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'dsh-ca-session-'))
+  try {
+    const store = await createStore({ dir })
+    const { ctx, prompted, sessions } = fakeCtx()
+    const bridge = createSessionBridge({ ctx, store })
+    const peer = { deviceId: 'peer-9', name: 'E', sessionId: undefined }
+
+    const result = await bridge.deliver(peer, '投到指定会话', { waitMs: 3000, sessionId: 'session-remote-1' })
+    assert.equal(result.reply, '好的，已经跑完了')
+    assert.equal(result.sessionId, 'session-remote-1')
+    assert.equal(prompted.length, 1)
+    assert.equal(prompted[0].sessionId, 'session-remote-1')
+    assert.equal(peer.sessionId, undefined, '定向投递不该改这条连接的固定会话')
+    assert.equal(sessions.size, 0, '定向投递不该顺手建会话')
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true })
+  }
+})
+
 test('没答复时按时返回空字符串，不卡死', async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'dsh-ca-session-'))
   try {

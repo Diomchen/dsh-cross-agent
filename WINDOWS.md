@@ -1,4 +1,4 @@
-# Windows 测试包说明（v0.2.4）
+# Windows 测试包说明（v0.2.5）
 
 这个包已在 Windows 11 实机跑通（发现、放行、指令、文件、远端建会话）。任何一步不对就把
 `%USERPROFILE%\.dsh\dsh-cross-agent\bootstrap.log` 和 `data\` 一起发回来。
@@ -6,7 +6,7 @@
 ## 1. 前置
 
 - DSH Desktop（或 `dsh`）已经能正常启动，Node ≥ 22.12。
-- 包：`dsh-cross-agent-0.2.4.tgz`。
+- 包：`dsh-cross-agent-0.2.5.tgz`。
 
 ## 2. 安装 / 升级
 
@@ -14,8 +14,8 @@
 
 ```powershell
 New-Item -ItemType Directory -Force "$env:USERPROFILE\.dsh\packages" | Out-Null
-Copy-Item C:\path\to\dsh-cross-agent-0.2.4.tgz "$env:USERPROFILE\.dsh\packages\"
-dsh plugin --profile desktop add "file:$env:USERPROFILE\.dsh\packages\dsh-cross-agent-0.2.4.tgz"
+Copy-Item C:\path\to\dsh-cross-agent-0.2.5.tgz "$env:USERPROFILE\.dsh\packages\"
+dsh plugin --profile desktop add "file:$env:USERPROFILE\.dsh\packages\dsh-cross-agent-0.2.5.tgz"
 ```
 
 装完**重启 DSH**（关进程再开）。验证版本：

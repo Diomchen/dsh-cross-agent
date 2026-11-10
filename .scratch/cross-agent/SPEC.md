@@ -109,7 +109,11 @@ HTTP `Date` 头估出来（`src/clock.js`）。这只是一次平移，不是放
 |---|---|---|---|
 | POST | `/ca/v1/hello` | 无（按源 IP 限 5 次/分） | 发起放行请求：`{v,deviceId,name,pub,nonce}` |
 | POST | `/ca/v1/hello-confirm` | 派生密钥 | 放行方回执：`{v,deviceId,name,pub,nonce}`，带签名 |
-| POST | `/ca/v1/ask` | 是 | `{id,text,sessionId?}` → `{ok,id,sessionId,reply}` 或 `{ok:false,reason:"pending",correlationId}` |
+| POST | `/ca/v1/ask` | 是 | `{id,text,sessionId?,waitMs}` → `{ok,id,sessionId,reply}` 或 `{ok:false,reason:"pending",correlationId}` |
+
+`sessionId` 只能填**这个对端自己经 `/ca/v1/session/create` 建出来的**会话；表里没有或不是它的
+一律 `403 session-not-allowed`（别人的会话不许投，这是"跨端会话"和"偷听"的分界）。不填就是
+这条连接的固定跨端会话。会话后来被删了 → `404 session-not-found`。
 | POST | `/ca/v1/file/begin` | 是 | 第一阶段：`{name,size,sha256,transferId,note,waitMs}` → 审核在这里做完，批准后发一个 5 分钟有效的 token |
 | POST | `/ca/v1/file` | 是 | 第二阶段：头 `x-ca-name`/`x-ca-size`/`x-ca-sha256`/`x-ca-transfer`，体为原始字节 → 回执；token 不在批准表里就 403 |
 | GET | `/ca/v1/file?path=<相对路径>` | 是 | 从本机**共享目录**（可多个根）流式下载；落在任何根之外的路径 404 |
