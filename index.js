@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises'
+import os from 'node:os'
 import path from 'node:path'
 
 import { createService } from './src/service.js'
@@ -130,7 +131,8 @@ function appendBootstrap (message) {
 }
 
 function bootstrapPath () {
-  return path.join(process.env.DSH_HOME || path.join(process.env.HOME ?? '.', '.dsh'), 'dsh-cross-agent', 'bootstrap.log')
+  const base = process.env.DSH_HOME || path.join(os.homedir(), '.dsh')
+  return path.join(base, 'dsh-cross-agent', 'bootstrap.log')
 }
 
 function describe (error) {

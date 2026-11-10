@@ -76,8 +76,20 @@ export function clampName (value) {
 export function safeFileName (value) {
   if (typeof value !== 'string') return ''
   const base = value.split(/[\\/]/).pop() ?? ''
-  const cleaned = base.replace(/[\u0000-\u001f\u007f]/g, '').replace(/^\.+/, '').trim()
-  return Array.from(cleaned).slice(0, 200).join('')
+  // Windows 上 `< > : " | ? *` 不能进文件名，结尾的点和空格也不允许；
+  // Linux/macOS 能接受它们，但同一个名字会因此变得"只在某台机器上合法"，所以统一收窄。
+  const cleaned = base
+    .replace(/[\u0000-\u001f\u007f]/g, '')
+    .replace(/[<>:"|?*]/g, '_')
+    .replace(/\.+$/, '')
+    .trim()
+    .replace(/^\.+/, '')
+  const truncated = Array.from(cleaned).slice(0, 200).join('').replace(/[. ]+$/, '')
+  if (truncated === '') return ''
+  // Windows 保留设备名：CON、PRN、AUX、NUL、COM1-9、LPT1-9（带不带扩展名都保留）。
+  const stem = truncated.split('.')[0].toUpperCase()
+  if (/^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/.test(stem)) return `_${truncated}`
+  return truncated
 }
 
 export function sha256Hex (buffer) {

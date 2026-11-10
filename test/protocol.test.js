@@ -53,6 +53,15 @@ test('显示名与文件名被收窄', () => {
   assert.equal(safeFileName('..hidden'), 'hidden')
 })
 
+test('文件名在 Windows 上也合法', () => {
+  assert.equal(safeFileName('a:b?.txt'), 'a_b_.txt')
+  assert.equal(safeFileName('trail. '), 'trail')
+  assert.equal(safeFileName('CON'), '_CON')
+  assert.equal(safeFileName('nul.md'), '_nul.md')
+  assert.equal(safeFileName('ok-name.md'), 'ok-name.md')
+  assert.equal(safeFileName('???'), '___')
+})
+
 test('签名可验，改一个字节就不过', () => {
   const key = crypto.randomBytes(32)
   const parts = { method: 'POST', path: '/ca/v1/ask', ts: 1, nonce: 'abcdefgh', bodyHash: 'f'.repeat(64) }
