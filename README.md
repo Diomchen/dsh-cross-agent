@@ -149,9 +149,14 @@ allowRemoteSessions: true                   # 允许远端建会话（默认开�
 ## 开发
 
 ```sh
-node --test test/*.test.js   # 58 个单测
-node scripts/e2e.mjs         # 单进程双实例端到端（真实 HTTP/HMAC + 文件落盘）
+node --test test/*.test.js    # 59 个单测
+node scripts/e2e.mjs          # 单进程双实例端到端（真实 HTTP/HMAC + 文件落盘）
+node scripts/smoke.mjs        # 单机验收：以已放行对端的身份，给本机插件发真实签名请求
+node scripts/smoke.mjs --security   # 再加一条：白名单外的工具名必须被拒
+node scripts/smoke.mjs --full       # 再建会话 + 定向投递（会花一次 agent turn）
 ```
+
+装完/升级完，`smoke.mjs` 是"这台机器还好不好使"的最短答案；它不需要第二台机器。
 
 ## 发版
 

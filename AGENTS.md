@@ -52,6 +52,7 @@
 ```sh
 node --test test/*.test.js   # 单测：协议、存储、限流、审核、连接、文件、会话桥
 node scripts/e2e.mjs         # 双实例端到端（真实 HTTP + HMAC + 落盘 + 审核）
+node scripts/smoke.mjs       # 单机验收：以已放行对端身份给本机插件发签名请求（--security / --full）
 ```
 
 没有 DSH 宿主也能跑：`src/session.js` 在测试里用假 `ctx`（见 `test/session.test.js`）。
