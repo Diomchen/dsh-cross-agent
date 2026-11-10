@@ -1,0 +1,139 @@
+name: CI
+
+# 什么时候跑：
+#   - 推 main / 提 PR：四组矩阵测试 + 打包自检
+#   - 推 v* tag：在上面之后真实 `npm pack`，把 tgz 与 SHA256SUMS 挂到 GitHub Release
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+# 同一个 ref 只留最新一次，避免重复排队烧 runner。
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test · ${{ matrix.os }} · node ${{ matrix.node }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # 协议两边要一起升级，所以最低支持版本（engines: >=22.12）和当前版本都测。
+          - os: ubuntu-latest
+            node: 22
+            e2e: true
+          - os: ubuntu-latest
+            node: 24
+          - os: macos-latest
+            node: 22
+          - os: windows-latest
+            node: 22
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: 版本自检
+        shell: bash
+        run: |
+          node -v
+          npm -v
+          node -e "const p=require('./package.json');console.log(p.name+'@'+p.version)"
+
+      # client.js 是给 Web 侧单独加载的，语法坏了单测不一定抓得到。
+      - name: 语法检查
+        run: node --check index.js && node --check client.js
+
+      - name: 单测
+        run: npm test
+
+      # 真 UDP 发现 + 真 HTTP/HMAC + 真落盘。只在 ubuntu 跑一次，够证明链路通。
+      - name: 端到端（双实例）
+        if: matrix.e2e
+        run: node scripts/e2e.mjs
+
+  package:
+    name: package · tgz
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # 清单不对就别发：少文件=装着起不来，多文件=把测试塞进用户机器。
+      - name: 校验打包内容
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            node scripts/verify-pack.mjs --version "${GITHUB_REF_NAME}"
+          else
+            node scripts/verify-pack.mjs
+          fi
+
+      - name: 打包
+        run: npm pack
+
+      - name: 校验和与摘要
+        shell: bash
+        run: |
+          sha256sum dsh-cross-agent-*.tgz | tee SHA256SUMS.txt
+          {
+            echo "### dsh-cross-agent $(node -p "require('./package.json').version")"
+            echo ''
+            echo '```'
+            cat SHA256SUMS.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dsh-cross-agent-tgz
+          path: |
+            dsh-cross-agent-*.tgz
+            SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    name: release · GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dsh-cross-agent-tgz
+          path: dist
+
+      # 重跑同一个 tag 时覆盖旧附件，不重复建 Release。
+      - name: 发布附件
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          ls -l dist
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/*.tgz dist/SHA256SUMS.txt --clobber
+          else
+            gh release create "$TAG" dist/*.tgz dist/SHA256SUMS.txt \
+              --title "$TAG" --generate-notes --verify-tag
+          fi
+          gh release view "$TAG" --json url,name,assets --jq '"\(.url)  \(.assets | length) 个附件"'

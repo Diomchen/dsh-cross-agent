@@ -1,5 +1,9 @@
 # dsh-cross-agent
 
+[![CI](https://github.com/Diomchen/dsh-cross-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/Diomchen/dsh-cross-agent/actions/workflows/ci.yml)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![node](https://img.shields.io/badge/node-%E2%89%A522.12-3c873a)](package.json)
+
 让**同一局域网里两台机器上的 DSH** 互相看见、互相下达指令、互相传文件。
 
 - 一份 DSH 实例养一个身份；只有**放行**过的对端才能说话。
@@ -160,9 +164,22 @@ node scripts/smoke.mjs --full       # 再建会话 + 定向投递（会花一次
 
 ## 发版
 
+本地打一个试装包：
+
 ```sh
-npm pack       # → dsh-cross-agent-<version>.tgz
+npm run verify:pack   # 打包内容自检：必需文件齐全，测试/脚本没混进去
+npm pack              # → dsh-cross-agent-<version>.tgz
 ```
+
+正式发版走 CI（`.github/workflows/ci.yml`）：改 `package.json` 的 `version`、提交、打 tag。
+
+```sh
+git tag v0.2.7 && git push origin main --tags
+```
+
+流水线会先跑 4 组矩阵测试（ubuntu node 22/24、macos 22、windows 22；ubuntu 上再跑一次双实例端到端），
+然后真实 `npm pack`，把 `dsh-cross-agent-0.2.7.tgz` 与 `SHA256SUMS.txt` 挂到 `v0.2.7` 的 Release。
+tag 和 `package.json` 版本对不上会直接失败。
 
 升级前先确认三件事：
 

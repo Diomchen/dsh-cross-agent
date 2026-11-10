@@ -24,10 +24,20 @@
   "scripts": {
     "test": "node --test --test-concurrency=4 test/*.test.js",
     "check": "node --check index.js && node --check client.js && node --test --test-concurrency=4 test/*.test.js",
+    "e2e": "node scripts/e2e.mjs",
+    "verify:pack": "node scripts/verify-pack.mjs",
     "fake-peer": "node scripts/fake-peer.mjs"
   },
   "engines": {
     "node": ">=22.12.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Diomchen/dsh-cross-agent.git"
+  },
+  "homepage": "https://github.com/Diomchen/dsh-cross-agent#readme",
+  "bugs": {
+    "url": "https://github.com/Diomchen/dsh-cross-agent/issues"
   },
   "keywords": [
     "dsh",
