@@ -17,6 +17,20 @@
 
 ## 安装
 
+两种装法，选一个：
+
+**装 Release 里的包**（CI 产出的 tgz，附 `SHA256SUMS.txt`）：到
+[Releases](https://github.com/Diomchen/dsh-cross-agent/releases) 下最新的
+`dsh-cross-agent-<version>.tgz`，或者：
+
+```sh
+gh release download -R Diomchen/dsh-cross-agent --pattern '*.tgz' --dir .
+# 然后在 DSH 里（或任何有 plugin_manager 的地方）：
+#   plugin_manager action=install_bundle target=/绝对路径/dsh-cross-agent-<version>.tgz
+```
+
+**或者从源码目录装**（改过代码、想立刻试）：
+
 ```sh
 # 在 DSH 里（或任何有 plugin_manager 的地方）：
 #   plugin_manager action=install_bundle target=/绝对路径/dsh-cross-agent
