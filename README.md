@@ -76,7 +76,7 @@ $DSH_HOME/dsh-cross-agent/
   instances/<deviceId>.json   同一台机器上的实例注册表
 ```
 
-## 给 agent 的四个工具
+## 给 agent 的六个工具
 
 | 工具 | 做什么 |
 |---|---|
@@ -86,6 +86,20 @@ $DSH_HOME/dsh-cross-agent/
 | `peer_file_fetch` | 从对方共享目录拉一个文件（只读，不能越界） |
 | `peer_tools` | 对方对外开放了哪些工具 |
 | `peer_tool` | 调用对方**白名单里**的一个工具（confirm 模式下每次都要对方点头） |
+| `peer_session_create` | 让对方在它某个目录下新建一条会话——目录即项目分组（已有目录复用，新目录当场注册） |
+
+`peer_session_create` 的权限有个硬边界：**远端可以往紧里调，不能自己往松里调**。
+新会话能开到哪一档，由接收方配置里的"按目录上限"决定，超出就夹住并在结果里标 `clamped: true`。
+
+```yaml
+# 接收方：按目录给新会话定权限上限（最长前缀匹配）
+sessionPermissionRules:
+  - { path: /Users/you/work/public, preset: workspace-write }
+  - { path: /Users/you/work/secret, preset: read-only }
+sessionPermissionDefault: workspace-write   # 没命中规则时
+allowRemotePermissionRaise: false           # 显式允许远端提权（默认关）
+allowRemoteSessions: true                   # 允许远端建会话（默认开；关掉就是 403）
+```
 
 `peer_ask` 的延迟是**对方一次 agent turn**，不是 RPC。对方 `confirm` 模式下它的人可能拒绝或超时；
 超时返回 `ok:false` + `correlationId`，之后可以带 `correlation_id` 再查一次。
@@ -124,7 +138,9 @@ $DSH_HOME/dsh-cross-agent/
 | 症状 | 先看什么 |
 |---|---|
 | 对端一直不出现 | 同一网段？`45881/udp` 放通了？macOS 首次监听会问"允许传入连接"，Windows 要给**专用网络**放行 |
+| 看得见端口、就是发现不到 | 企业 Wi-Fi 常丢广播（客户端隔离）。用 `/cross-agent probe <对端IP>` 单播唤醒，或把静态对端写进 `~/.dsh/dsh-cross-agent/peers.json` |
 | 看得见但连不上 | `45883/tcp` 被挡；或对方从没点过「放行」 |
+| 一直 `clock-skew` | 两台机器的时钟差超过 60 秒。插件会按对端 beacon 的钟自动对齐（窗口宽度不变），但差到小时级就要真的校时了：Windows 设置里「立即同步」|
 | 指令一直 `awaiting-review` | 对方是 `confirm` 模式，需要它的人点同意；5 分钟没人管就返回 pending |
 | 指纹两端不一致 | 有人在中间动包，或一端删过 `identity.json`。删掉两边的 `peers.json` 重新放行 |
 | 文件传一半失败 | 收件箱满了（1 GiB / 500 件）或超过单件 100 MiB；错误里会带原因 |

@@ -4,7 +4,7 @@
  * 只记事实，不判断对错。五类动作 + 一类拒绝：
  *   admit / mode / review / instruction / transfer / denied
  */
-export const AUDIT_KINDS = ['admit', 'mode', 'review', 'instruction', 'transfer', 'denied']
+export const AUDIT_KINDS = ['admit', 'mode', 'review', 'instruction', 'transfer', 'session', 'denied']
 
 export function createAudit ({ store, now = () => Date.now(), max = 1000 } = {}) {
   let seq = 0

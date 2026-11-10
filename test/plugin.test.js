@@ -132,11 +132,11 @@ test('原始定义对象也能编译出合法的 parameters schema', async () =>
   }
 })
 
-test('apply 注册 6 个工具、1 个命令、1 条本地路由', async () => {
+test('apply 注册 7 个工具、1 个命令、1 条本地路由', async () => {
   const app = await boot()
   try {
     assert.deepEqual(app.tools.map((tool) => tool.name).sort(), [
-      'peer_ask', 'peer_file_fetch', 'peer_file_send', 'peer_list', 'peer_tool', 'peer_tools'
+      'peer_ask', 'peer_file_fetch', 'peer_file_send', 'peer_list', 'peer_session_create', 'peer_tool', 'peer_tools'
     ])
     assert.deepEqual(app.commands.map((command) => command.name), ['cross-agent'])
     assert.ok(app.routes.has('/cross-agent'))
@@ -203,7 +203,7 @@ test('非回环来源一律 403', async () => {
 test('停用后工具、命令、路由都被摘掉', async () => {
   const app = await boot()
   try {
-    assert.equal(app.tools.length, 6)
+    assert.equal(app.tools.length, 7)
     app.stop().then(() => {})
     await new Promise((resolve) => setTimeout(resolve, 200))
     assert.equal(app.tools.length, 0)

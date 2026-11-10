@@ -1,14 +1,17 @@
 import crypto from 'node:crypto'
+import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
 import { createApprovals } from './approvals.js'
 import { createAudit } from './audit.js'
+import { createClockGuard } from './clock.js'
 import { createDiscovery } from './discovery.js'
 import { createFiles } from './files.js'
 import { createIdentity } from './identity.js'
 import { createLimiters } from './limits.js'
 import { createPeers } from './peers.js'
+import { DEFAULT_SESSION_PRESET, normalizeRules, resolveSessionPreset } from './presets.js'
 import { createRpcClient, createRpcServer } from './rpc.js'
 import { createSessionBridge } from './session.js'
 import {
@@ -32,7 +35,7 @@ import {
  *   `start()/dispose()`  生命周期。
  */
 export async function createService (ctx, config = {}) {
-  const log = logger(ctx)
+  const log = logger(ctx, config)
   const home = resolveHome(config)
   const workspace = workspaceDir(ctx)
 
@@ -44,6 +47,7 @@ export async function createService (ctx, config = {}) {
   }
 
   const audit = createAudit({ store })
+  const clock = createClockGuard()
   const limits = createLimiters()
   const approvals = createApprovals({ store, audit })
   await approvals.open()
@@ -53,6 +57,13 @@ export async function createService (ctx, config = {}) {
   const exposedTools = Array.isArray(config.exposedTools)
     ? [...new Set(config.exposedTools.filter((name) => typeof name === 'string' && name !== ''))]
     : []
+  /** 按目录的会话权限上限：远端可以更紧，不能更松（见 src/presets.js）。 */
+  const sessionPermissionRules = normalizeRules(config.sessionPermissionRules)
+  const sessionPermissionDefault = typeof config.sessionPermissionDefault === 'string' && config.sessionPermissionDefault !== ''
+    ? config.sessionPermissionDefault
+    : DEFAULT_SESSION_PRESET
+  const allowRemotePermissionRaise = config.allowRemotePermissionRaise === true
+  const allowRemoteSessions = config.allowRemoteSessions !== false
 
   let rpcClient = null
   const peers = createPeers({
@@ -68,18 +79,26 @@ export async function createService (ctx, config = {}) {
 
   const discoveryPort = Number.isInteger(config.discoveryPort) ? config.discoveryPort : DEFAULT_DISCOVERY_PORT
   const rpcPort = Number.isInteger(config.port) ? config.port : DEFAULT_PORT
+  // 配置里的静态对端优先；否则读 $DSH_HOME/dsh-cross-agent/peers.json
+  //（那个文件不用重启宿主就能靠插件重载生效，广播被挡的网段靠它维持心跳）。
+  const configuredTargets = normalizeProbeTargets(config.peerAddresses)
+  const probeTargets = configuredTargets.length > 0 ? configuredTargets : normalizeProbeTargets(await readPeerFile(home))
   const discovery = createDiscovery({
     identity,
     port: discoveryPort,
     servicePort: rpcPort,
     registryDir: config.registryDir || path.join(home, 'instances'),
+    probeTargets,
     limits,
-    log
+    log,
+    // 对端 beacon 里的 ts 就是它的墙钟：这是我们要对齐的那个钟（见 src/clock.js）。
+    onPacket: (packet) => clock.observe(packet.deviceId, packet.ts)
   })
 
   rpcClient = createRpcClient({
     identity,
     peers,
+    clock,
     resolve: (deviceId) => discovery.addressOf(deviceId),
     log
   })
@@ -101,6 +120,7 @@ export async function createService (ctx, config = {}) {
     peers,
     limits,
     audit,
+    clock,
     log,
     routes: buildRoutes()
   })
@@ -154,6 +174,10 @@ export async function createService (ctx, config = {}) {
       'POST /ca/v1/tool': {
         auth: 'key',
         handler: async ({ body, auth }) => handleToolCall(body, auth)
+      },
+      'POST /ca/v1/session/create': {
+        auth: 'key',
+        handler: async ({ body, auth }) => handleSessionCreate(body, auth)
       }
     }
   }
@@ -349,6 +373,98 @@ export async function createService (ctx, config = {}) {
     return result
   }
 
+  /**
+   * 远端请求"在某台机器的某个目录下建一条会话"。目录决定项目分组：
+   * 已经注册过的目录会复用它（宿主的 workspace/create 是幂等的），
+   * 新目录则当场注册成新的分组。
+   *
+   * 权限由**接收方**说了算：远端带的 permission 只能往紧里调（见 src/presets.js）。
+   */
+  async function handleSessionCreate (body, auth) {
+    const peerId = auth.deviceId
+    const peer = peers.get(peerId)
+    if (peer === null || peer.state !== 'admitted') throw httpFail(403, 'not-admitted')
+    if (!allowRemoteSessions) {
+      await audit.record({ peerId, peerName: peer.name, kind: 'denied', outcome: 'sessions-disabled', detail: 'session/create' })
+      throw httpFail(403, 'sessions-disabled')
+    }
+
+    const dir = typeof body?.path === 'string' ? body.path.trim() : ''
+    if (dir === '' || !path.isAbsolute(dir)) throw httpFail(400, 'bad-path')
+    try {
+      const stat = await fs.stat(dir)
+      if (!stat.isDirectory()) throw new Error('not-a-directory')
+    } catch {
+      throw httpFail(400, 'bad-path')
+    }
+
+    const title = clampTitle(body?.title) || path.basename(dir)
+    const decision = await review('session', peer, {
+      summary: `新建会话：${dir} · ${title}`,
+      payload: { path: dir, title, permission: body?.permission ?? null },
+      timeoutMs: reviewTimeout(clampWait(body?.waitMs))
+    })
+    if (decision !== 'approved') return { ok: false, reason: decision }
+
+    const resolved = resolveSessionPreset({
+      dir,
+      requested: typeof body?.permission === 'string' ? body.permission : null,
+      rules: sessionPermissionRules,
+      fallback: sessionPermissionDefault,
+      allowRaise: allowRemotePermissionRaise
+    })
+
+    const created = await createSessionIn(dir, title, resolved.preset)
+    await audit.record({
+      peerId,
+      peerName: peer.name,
+      kind: 'session',
+      outcome: 'created',
+      detail: `${dir} · ${title} · ${resolved.preset}${resolved.clamped ? ` (请求 ${resolved.requested} 被夹住)` : ''}`
+    })
+    return {
+      ok: true,
+      sessionId: created.sessionId,
+      workspaceId: created.workspaceId,
+      title: created.title,
+      permission: resolved.preset,
+      requestedPermission: resolved.requested,
+      clamped: resolved.clamped
+    }
+  }
+
+  /** 在宿主里真的把这条会话建出来：分组 → 会话 → 权限 → 标题。 */
+  async function createSessionIn (dir, title, preset) {
+    const workspaces = ctx?.workspaceController
+    const controller = ctx?.sessionController
+    if (typeof workspaces?.create !== 'function' || typeof controller?.create !== 'function') {
+      throw httpFail(501, 'sessions-unavailable')
+    }
+    const registered = await workspaces.create({ path: dir })
+    const workspaceId = registered?.workspace?.workspaceId ?? registered?.workspaceId
+    if (typeof workspaceId !== 'string' || workspaceId === '') throw httpFail(500, 'workspace-failed')
+
+    const created = await controller.create({ workspaceId })
+    const sessionId = created?.sessionId
+    if (typeof sessionId !== 'string' || sessionId === '') throw httpFail(500, 'session-failed')
+
+    if (typeof preset === 'string' && preset !== '') {
+      try {
+        const session = await ctx?.sessions?.get?.(sessionId)
+        if (session !== undefined && session !== null) await ctx?.permissionPresets?.set?.(session, preset)
+      } catch (error) {
+        // 权限没设上不该让整条请求失败，但要留下痕迹
+        log.warn(`[dsh-cross-agent] 设置会话权限失败（${preset}）：${error?.message ?? error}`)
+      }
+    }
+    try {
+      await controller.rename({ sessionId, title })
+    } catch (error) {
+      log.warn(`[dsh-cross-agent] 会话改名失败：${error?.message ?? error}`)
+    }
+    return { sessionId, workspaceId, title, permission: preset }
+  }
+
   async function runPeerTool (peer, tool, args, budget) {
     const tools = ctx?.tools
     if (typeof tools?.execute !== 'function') throw httpFail(501, 'tools-unavailable')
@@ -460,6 +576,13 @@ export async function createService (ctx, config = {}) {
         return { ok: true, result: { name: await identity.rename(payload.name) } }
       case 'refresh':
         return { ok: true, result: await state() }
+      case 'probe': {
+        const address = typeof payload.address === 'string' ? payload.address.trim() : ''
+        if (address === '') throw new Error('probe 需要一个地址')
+        const port = Number.isInteger(payload.port) ? payload.port : discovery.port || discoveryPort
+        if (!discovery.probe(address, port)) throw new Error('发现服务没在跑，探针发不出去')
+        return { ok: true, result: { address, port } }
+      }
       default:
         throw new Error(`未知动作：${action}`)
     }
@@ -540,6 +663,35 @@ export async function createService (ctx, config = {}) {
         throw new Error(`这个对端现在不在线（${error.code}）`)
       }
       throw new Error(`投递失败：${error?.message ?? error}`)
+    }
+  }
+
+  /**
+   * 让对端在它那台机器的某个目录下建一条会话。目录既是"项目分组"的身份，
+   * 也是新会话的 cwd——已经存在就复用，不存在就当场注册。
+   */
+  async function createPeerSession ({ peer: ref, path: remotePath, title = '', permission = '', waitMs } = {}) {
+    const target = resolvePeer(ref)
+    if (!discovery.isOnline(target.deviceId)) throw new Error('这个对端现在不在线')
+    if (typeof remotePath !== 'string' || remotePath.trim() === '') throw new Error('需要一个对端的目录（绝对路径）')
+    const budget = clampWait(waitMs)
+    const response = await rpcClient.call(target.deviceId, 'POST', '/ca/v1/session/create', {
+      path: remotePath.trim(),
+      title: typeof title === 'string' ? title : '',
+      permission: typeof permission === 'string' ? permission : '',
+      waitMs: budget
+    }, { timeoutMs: Math.max(reviewTimeout(budget), 20_000) + 10_000 })
+    if (response?.ok !== true) {
+      return { ok: false, reason: response?.reason ?? 'unknown' }
+    }
+    return {
+      ok: true,
+      sessionId: response.sessionId,
+      workspaceId: response.workspaceId,
+      title: response.title,
+      permission: response.permission,
+      requestedPermission: response.requestedPermission ?? null,
+      clamped: response.clamped === true
     }
   }
 
@@ -655,6 +807,7 @@ export async function createService (ctx, config = {}) {
     state,
     act,
     ask,
+    createPeerSession,
     sendFile,
     fetchFile,
     callTool,
@@ -700,8 +853,17 @@ function workspaceDir (ctx) {
   return null
 }
 
-function logger (ctx) {
+function logger (ctx, config = {}) {
   const warn = (message) => {
+    /**
+     * 运行期告警（例如"投递失败：..."）在宿主日志里，而人排查时手里只有插件自己的
+     * bootstrap.log——远端机器尤其如此。所以这里同时抄一份过去。
+     */
+    try {
+      config.onWarn?.(String(message))
+    } catch {
+      // 抄一份失败不能反过来影响告警本身
+    }
     try {
       if (typeof ctx?.logger?.warn === 'function') ctx.logger.warn(message)
       else console.warn(message)
@@ -723,6 +885,13 @@ function requireId (payload) {
 }
 
 /** 审核窗口不能超过发起方愿意等的时间：发起方早就走了还挂着审核没有意义。 */
+/** 会话标题：去掉控制字符，太长的截断——它会出现在对端的会话列表里。 */
+function clampTitle (value) {
+  if (typeof value !== 'string') return ''
+  const text = value.replace(/[\u0000-\u001f\u007f]/g, ' ').trim()
+  return text.length > 120 ? text.slice(0, 120) : text
+}
+
 function reviewTimeout (budget) {
   return Math.max(1000, Math.min(REVIEW_WINDOW_MS, budget - 1500))
 }
@@ -746,6 +915,42 @@ function resolveShareRoots (config, base) {
   }
   if (resolved.length === 0) resolved.push(path.join(base, '.cross-agent', 'share'))
   return resolved
+}
+
+/**
+ * 读 `$DSH_HOME/dsh-cross-agent/peers.json`：`["10.0.0.9"]` 或 `{ "peers": [...] }`。
+ * 读不到 / 解析失败都当成"没有静态对端"，不影响广播发现。
+ */
+async function readPeerFile (home) {
+  try {
+    const parsed = JSON.parse(await fs.readFile(path.join(home, 'peers.json'), 'utf8'))
+    if (Array.isArray(parsed)) return parsed
+    if (parsed !== null && typeof parsed === 'object' && Array.isArray(parsed.peers)) return parsed.peers
+    return []
+  } catch {
+    return []
+  }
+}
+
+/**
+ * 静态对端地址：广播被 Wi-Fi 抑制（客户端隔离 / 广播过滤）时，靠每拍单播探针维持心跳。
+ * 接受 "10.0.0.9" 或 "10.0.0.9:45881"。
+ */
+function normalizeProbeTargets (value) {
+  if (!Array.isArray(value)) return []
+  const targets = []
+  for (const raw of value) {
+    if (typeof raw !== 'string') continue
+    const text = raw.trim()
+    if (text === '') continue
+    const cut = text.lastIndexOf(':')
+    const tail = cut > 0 ? text.slice(cut + 1) : ''
+    const hasPort = tail !== '' && /^\d+$/.test(tail)
+    const address = hasPort ? text.slice(0, cut) : text
+    if (address === '') continue
+    targets.push(hasPort ? { address, port: Number(tail) } : { address })
+  }
+  return targets
 }
 
 function shortArgs (args) {

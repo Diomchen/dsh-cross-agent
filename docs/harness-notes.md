@@ -28,14 +28,26 @@
 - 侧栏入口在 `sidebar.panellist` 注册：`{ id, order, label }`，**id 必须等于 `main` 的 key**，
   侧栏自己渲染按钮并 `selectPanel(id)`；组件只画图标，收到的 owner props 是 `{ size, active }`。
 
+## 已实测（2026-11-10，DSH 0.2.2-rc.1，真机双向联调）
+
+这四条是 `/ca/v1/ask` 在真机上恒 500 的根因，现在都按实测形状写死了：
+
+| 依赖 | 实测形状 | 踩过的坑 |
+|---|---|---|
+| 插件声明服务 | `export const inject = ['webServer','tools','commands','sessions','sessionController']` | cordis 的 ctx 是**代理**：访问没在 `inject` 里声明的服务直接抛 `cannot get property "sessions" without inject`，不是返回 `undefined`。这个版本的 cordis **只认数组**，`{required, optional}` 会被当成两个服务名，插件永远 `pending` |
+| 建会话 | `ctx.sessionController.create({ cwd, title })` → `{ sessionId: "session-<uuid>", agentPreset }` | 返回的 id **带 `session-` 前缀**；自己 `crypto.randomUUID()` 拼一个去 `prompt`，宿主回 `session "..." not found` |
+| 投递 | `sessionController.prompt({ requestId, sessionId, mode:'queue', content:[{type:'text',text}] }, signal)` | 第二个参数 `signal` **必填**：宿主内部直接 `signal.throwIfAborted()`，传 `undefined` 会炸在宿主栈里（`Cannot read properties of undefined`） |
+| 默认工作目录 | `ctx.workingDirectory.defaultDirectory`（**必须注入** `workingDirectory`，否则读它直接抛，被 catch 吞掉后退到 `$DSH_HOME/dsh-cross-agent/`） | 表现为收件箱/共享目录跑到工作区外，`workspace-write` 沙箱的 agent 写不进去 |
+| 列会话 | `sessionController.list(query, signal)` → `{ items: [{ sessionId, cwd, running, projections }] }` | 用它核对"这条跨端会话还在不在"，比 `sessions.get` 可靠（`sessions` 上没有 `get`） |
+
+`ctx.agents` / `ctx.agentLoop` **不是服务**：直接读会抛，所以 `src/session.js` 用 `service()` 逐项 try/catch 试探，缺了就当没有。
+
 ## 待验（还没在真实 DSH 进程里逐字段确认）
 
 | 依赖 | 我写的形状 | 风险 | 退路 |
 |---|---|---|---|
-| `ctx.sessionController.prompt(request, signal)` | `{ requestId, sessionId, mode:'queue', content:[{type:'text',text}] }` | 字段名可能不同 | `src/session.js` 里 `deliverNow` 是唯一调用点 |
-| 答复事件 | `ctx.on('session/event', (session, event) => event.type === 'assistant/message'`，取 `event.data.message` | 事件名/载荷可能不同 | 已加"静默 1.2 秒即收"的兜底判定 |
+| 答复事件 | `ctx.on('session/event', (session, event) => event.type === 'assistant/message'`，取 `event.data.message` | 事件名/载荷可能不同 | 已加"静默 1.2 秒即收"的兜底判定（联调时确实拿到了答复，说明链路成立） |
 | 空闲事件 | `ctx.on('api-session/status', (sessionId, running) => running === false)` | 名称可能不同 | 同上 |
-| 建会话 | 依次试 `agents.create` / `agentLoop.create` / `sessions.prepare` | 三条都可能不是这个形状 | 三条全挂会抛"创建跨端会话失败"，不会静默 |
 | `ctx.webServer.register({kind:'prefix', path, handler})` | 前缀路由，处理 `/cross-agent/state` 与 `/cross-agent/action` | 低：dsh-zoo 用的同一形态 | 失败时只丢面板，工具仍可用 |
 | `ctx.tools.register(definition)` | `{ name, description, parameters(内联 required), output:{schema,render}, execute }` | 中：`parameters` 的 DSL 是作者侧糖 | 退路是直接给 JSON Schema 形状 |
 | `ctx.commands.register(definition)` | `{ name, description, input:{hint}, recordInput:false, handler }` | 低 | 失败只丢命令 |

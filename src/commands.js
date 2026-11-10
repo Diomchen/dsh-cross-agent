@@ -7,7 +7,7 @@ export function registerCommands (ctx, service, { log } = {}) {
     name: 'cross-agent',
     description: '跨端 agent 会话：查看连接与待办、放行对端、审核对方的指令与文件。',
     input: {
-      hint: 'status | pending | approve <id> | reject <id> | connect <名字> | allow <名字> | mode <名字> open|confirm --yes | block <名字> | rename <新名字>'
+      hint: 'status | pending | approve <id> | reject <id> | connect <名字> | allow <名字> | mode <名字> open|confirm --yes | block <名字> | rename <新名字> | probe <地址> [端口]'
     },
     recordInput: false,
     async handler (invocation) {
@@ -44,6 +44,14 @@ export function registerCommands (ctx, service, { log } = {}) {
             const deviceId = await resolve(service, rest[0])
             await service.act('block', { deviceId })
             return ok(`已封禁 ${rest[0]}`)
+          }
+          case 'probe': {
+            const address = rest[0]
+            if (typeof address !== 'string' || address === '') throw new Error('用法：/cross-agent probe <地址> [端口]')
+            const port = rest[1] === undefined ? undefined : Number(rest[1])
+            if (port !== undefined && !Number.isInteger(port)) throw new Error(`端口不像数字：${rest[1]}`)
+            const result = await service.act('probe', port === undefined ? { address } : { address, port })
+            return ok(`已向 ${result.result.address}:${result.result.port} 发探针；对端在线的话几秒内会出现在对端列表`)
           }
           case 'rename': {
             const name = rest.join(' ')

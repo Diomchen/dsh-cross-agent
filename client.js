@@ -320,17 +320,23 @@ window.__ModuleLoader__.load({
     function apply (ctx) {
       runtime = ctx
       const disposers = []
-      const register = (options, Component) => {
+      /**
+       * 槽位必须先被拥有者声明（`main`/`shell.bottom` 由 ui-layout 声明，
+       * `sidebar.panellist` 由 ui-sidebar 声明）。`inject` 会在声明已存在时立即
+       * 执行回调，否则挂起等声明提交——裸 `register` 在声明尚未出现时会被拒，
+       * 而本文件自己的 try/catch 会把它变成一条没人看见的 console.warn。
+       */
+      const contribute = (ownerKey, options, Component) => {
         try {
-          disposers.push(ctx.slots.register(options, Component))
+          disposers.push(ctx.slots.inject(ownerKey, () => ctx.slots.register(options, Component)))
         } catch (error) {
-          console.warn('[dsh-cross-agent] 槽位注册失败', options.name, error)
+          console.warn('[dsh-cross-agent] 槽位注册失败', ownerKey, error)
         }
       }
       try {
-        register({ name: 'main', id: 'cross-agent-panel', key: 'cross-agent', order: 60 }, Panel)
-        register({ name: 'shell.bottom', id: 'cross-agent-status', order: 20 }, StatusBar)
-        register({ name: 'sidebar.panellist', id: 'cross-agent', order: 40, label: () => '跨端 agent' }, CrossAgentIcon)
+        contribute('main', { name: 'main', id: 'cross-agent-panel', key: 'cross-agent', order: 60 }, Panel)
+        contribute('shell.bottom', { name: 'shell.bottom', id: 'cross-agent-status', order: 20 }, StatusBar)
+        contribute('sidebar.panellist', { name: 'sidebar.panellist', id: 'cross-agent', order: 40, label: () => '跨端 agent' }, CrossAgentIcon)
       } catch (error) {
         console.warn('[dsh-cross-agent] 初始化失败', error)
       }

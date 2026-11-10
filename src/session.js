@@ -62,24 +62,35 @@ export function createSessionBridge ({ ctx, store, log, now = () => Date.now() }
     }
   }
 
+  /**
+   * 取证式读取：cordis 的 ctx 是代理，读一个**没在 `inject` 里声明**的服务会抛
+   * `cannot get property "x" without inject`（不是返回 undefined）。这里逐项兜住——
+   * 少一个可选服务（`agents` / `agentLoop`）不该让整条投递 500。
+   */
+  function service (name) {
+    try {
+      return ctx?.[name] ?? undefined
+    } catch {
+      return undefined
+    }
+  }
+
   function controllers () {
     return {
-      sessions: ctx?.sessions,
-      agents: ctx?.agents,
-      loop: ctx?.agentLoop,
-      controller: ctx?.sessionController
+      sessions: service('sessions'),
+      agents: service('agents'),
+      loop: service('agentLoop'),
+      controller: service('sessionController')
     }
   }
 
   async function ensure (peer) {
     arm()
-    if (typeof peer.sessionId === 'string' && peer.sessionId !== '') {
-      const existing = controllers().sessions?.get?.(peer.sessionId)
-      if (existing !== undefined && existing !== null) return peer.sessionId
+    if (typeof peer.sessionId === 'string' && peer.sessionId !== '' && await alive(peer.sessionId)) {
+      return peer.sessionId
     }
-    const sessionId = peer.sessionId ?? crypto.randomUUID()
-    const created = await createSession(sessionId)
-    if (!created) throw new Error('创建跨端会话失败：宿主没有可用的会话创建接口')
+    const sessionId = await createSession(peer)
+    if (sessionId === null) throw new Error('创建跨端会话失败：宿主没有可用的会话创建接口')
     peer.sessionId = sessionId
     if (peer.deviceId !== undefined) {
       try {
@@ -91,23 +102,56 @@ export function createSessionBridge ({ ctx, store, log, now = () => Date.now() }
     return sessionId
   }
 
-  async function createSession (sessionId) {
-    const { agents, loop, sessions } = controllers()
+  /**
+   * 这个 id 在宿主里还算数吗。宿主没有 `sessions.get` 时只能"假定活着"——
+   * 真投不进去会在 prompt 那一步报 `session ... not found`，由调用方决定是否重建。
+   */
+  async function alive (sessionId) {
+    const { sessions } = controllers()
+    if (typeof sessions?.get !== 'function') return true
+    try {
+      const existing = await sessions.get(sessionId)
+      return existing !== undefined && existing !== null
+    } catch {
+      return false
+    }
+  }
+
+  /**
+   * 建一条跨端会话。实测过的形状（DSH 0.2.2-rc.1）：
+   *   `sessionController.create({ cwd, title })` → `{ sessionId: "session-<uuid>", agentPreset }`
+   * 注意返回值的 id 带 `session-` 前缀，自己拿 `crypto.randomUUID()` 拼一个宿主不认。
+   * 后面几条是低版本宿主的退路。
+   */
+  async function createSession (peer) {
+    const { controller, agents, loop, sessions } = controllers()
     const cwd = resolveCwd()
+    const title = `跨端 · ${peer?.name || '对端'}`
     const attempts = [
-      () => agents?.create?.({ sessionId, cwd, title: '跨端' }),
-      () => loop?.create?.(sessionId, {}, { cwd }),
-      () => sessions?.prepare?.(sessionId, { cwd })
+      async () => pickSessionId(await controller?.create?.({ cwd, title })),
+      async () => pickSessionId(await controller?.create?.({ title })),
+      async () => pickSessionId(await agents?.create?.({ cwd, title })),
+      async () => pickSessionId(await loop?.create?.(crypto.randomUUID(), {}, { cwd })),
+      async () => pickSessionId(await sessions?.prepare?.(crypto.randomUUID(), { cwd }))
     ]
     for (const attempt of attempts) {
       try {
-        const result = await attempt()
-        if (result !== undefined && result !== null) return true
+        const sessionId = await attempt()
+        if (typeof sessionId === 'string' && sessionId !== '') return sessionId
       } catch (error) {
         warn(`建会话的一种方式失败：${error?.message ?? error}`)
       }
     }
-    return false
+    return null
+  }
+
+  function pickSessionId (result) {
+    if (result === undefined || result === null) return null
+    if (typeof result === 'string') return result
+    if (typeof result.sessionId === 'string' && result.sessionId !== '') return result.sessionId
+    if (typeof result.id === 'string' && result.id !== '') return result.id
+    if (typeof result.header?.id === 'string' && result.header.id !== '') return result.header.id
+    return null
   }
 
   function resolveCwd () {
@@ -135,6 +179,7 @@ export function createSessionBridge ({ ctx, store, log, now = () => Date.now() }
       throw new Error('投递内容太大')
     }
 
+    let abort = null
     const entry = { reply: '', startedAt: now(), lastAt: 0, settle: null }
     pending.set(sessionId, entry)
 
@@ -158,12 +203,16 @@ export function createSessionBridge ({ ctx, store, log, now = () => Date.now() }
       tick.unref?.()
     })
 
+    // 第二个参数是 AbortSignal：宿主内部会直接 `signal.throwIfAborted()`，
+    // 传 undefined 会炸在宿主的调用栈里（曾表现为 /ask 恒 500 internal）。
+    // 我们只借它做"取消"的语义，等待超时后不再关心这次 turn 的答复。
+    abort = new AbortController()
     await controller.prompt({
       requestId: crypto.randomUUID(),
       sessionId,
       mode: 'queue',
       content: [{ type: 'text', text: body }]
-    }, undefined)
+    }, abort.signal)
 
     const reason = await done
     pending.delete(sessionId)

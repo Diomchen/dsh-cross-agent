@@ -29,6 +29,8 @@ export function createDiscovery ({
   bindAddress = '0.0.0.0',
   broadcastAddress = '255.255.255.255',
   beaconIntervalMs = BEACON_INTERVAL_MS,
+  /** 广播被挡的网段里，额外单播探这些地址（每拍一次），维持双方的"在线"心跳。 */
+  probeTargets = [],
   registryDir = null,
   limits,
   onPacket,
@@ -149,8 +151,28 @@ export function createDiscovery ({
 
   async function tick () {
     sendBeacon()
+    for (const target of probeTargets) probe(target.address, target.port)
     await announceLocal()
     await scanLocal()
+  }
+
+  /**
+   * 单播探针：向一个已知地址发一条 beacon，让对端记住我们并回一条 ack。
+   * 广播被 Wi-Fi（客户端隔离 / 广播抑制）挡住时的人工兜底——对端会把 ack
+   * 单播回本 socket，`onMessage` 顺手把它的 deviceId / 名字 / 端口都记下来。
+   * 默认发给对端的**发现端口**（和本机绑定的那个一致），不是 RPC 端口。
+   */
+  function probe (address, port = boundPort > 0 ? boundPort : advertisedPort()) {
+    if (socket === null || !started || disposed) return false
+    if (typeof address !== 'string' || address === '') return false
+    if (!isPort(port)) return false
+    try {
+      send(packetFor('beacon'), port, address)
+      return true
+    } catch (error) {
+      warn(`探针发不出去：${error?.message ?? error}`)
+      return false
+    }
   }
 
   function remember (packet, address, sourcePort) {
@@ -302,6 +324,7 @@ export function createDiscovery ({
     start,
     stop,
     sendBeacon,
+    probe,
     addressOf,
     learn,
     isOnline,

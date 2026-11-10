@@ -1,11 +1,11 @@
-# Windows 测试包说明（v0.2.1）
+# Windows 测试包说明（v0.2.4）
 
 这个包是**未在 Windows 实机验证过**的测试包。请按下面顺序走，任何一步不对就把日志发回来。
 
 ## 1. 前置
 
 - DSH Desktop（或 `dsh`）已经能正常启动，Node ≥ 22.12。
-- 包：`dsh-cross-agent-0.2.1.tgz`。
+- 包：`dsh-cross-agent-0.2.4.tgz`。
 
 ## 2. 安装（二选一）
 
@@ -13,7 +13,7 @@
 
 ```powershell
 mkdir C:\temp\dsh-cross-agent
-tar -xzf dsh-cross-agent-0.2.1.tgz -C C:\temp\dsh-cross-agent --strip-components=1
+tar -xzf dsh-cross-agent-0.2.4.tgz -C C:\temp\dsh-cross-agent --strip-components=1
 ```
 
 然后在 DSH 里（或任何能调 `plugin_manager` 的地方）：
@@ -25,7 +25,7 @@ plugin_manager  action=install_bundle  target=C:\temp\dsh-cross-agent
 **B. 直接装 tgz**
 
 ```powershell
-dsh plugin install C:\path\to\dsh-cross-agent-0.2.1.tgz
+dsh plugin install C:\path\to\dsh-cross-agent-0.2.4.tgz
 ```
 
 两种方式都会在 `%USERPROFILE%\.dsh\profiles\<profile>\node_modules` 里装一份。
@@ -59,6 +59,63 @@ curl.exe -s http://127.0.0.1:<DSH端口>/cross-agent/state
 3. 点「请求连接」→ 对方面板出现一条「连接请求」→ 点「放行」；
 4. 两端显示的 **8 位指纹必须一致**；不一致就停下（有人动包），删掉双方的 `peers.json` 重来；
 5. 默认 `confirm` 模式：让 A 的 agent 调 `peer_ask` 给 B 发一句话，B 的面板出现待审核，点「同意」后 A 拿到答复。
+
+## 5.4 广播被 Wi-Fi 挡掉时（企业网的常见情况）
+
+Windows 这边如果 `peers` 一直是空的，但对端的 `45883/tcp` 明明能连上，通常是**客户端隔离 / 广播过滤**
+把 `255.255.255.255:45881` 丢了——单播通、广播不通。插件为此留了两条出口：
+
+1. **手工探针**（当场排障）：
+   ```
+   /cross-agent probe 10.10.11.11
+   ```
+   向对端的**发现端口**（默认 45881，不是 45883）单播一条 beacon；对端会回 ack，
+   几秒内就出现在「连接」里。
+
+2. **静态对端**（长期维持心跳）：在 `%USERPROFILE%\.dsh\dsh-cross-agent\peers.json` 写
+   ```json
+   { "peers": ["10.10.11.11", "10.10.10.120:45881"] }
+   ```
+   插件每拍（5 秒）往这些地址单播探针。也可以改用配置项 `peerAddresses`，
+   但配置文件只在宿主启动时读，`peers.json` 只要重载插件就生效。
+
+## 5.45 收件箱和共享目录在哪（沙箱会管到它）
+
+默认位置是**默认工作目录**下的 `.cross-agent\`：
+
+```
+%USERPROFILE%\.dsh\profiles\desktop\.cross-agent\inbox\<对端名字>\
+%USERPROFILE%\.dsh\profiles\desktop\.cross-agent\share\
+```
+
+v0.2.2 及更早版本里 `workingDirectory` 服务没注入成功，会悄悄退到
+`%USERPROFILE%\.dsh\dsh-cross-agent\.cross-agent\`——那个位置在跨端会话的工作区**之外**，
+`workspace-write` 沙箱会拦住 agent 往里写（升级后旧文件不会自动搬，需要的话自己挪一下）。
+想换地方就配 `inboxDir` / `shareDir`。
+
+## 5.5 按目录设新会话的权限（v0.2.4+）
+
+远端可以在你机器上建会话，但**能开到哪一档由你定**。在 profile 的 `cordis.patch.yml` 里给插件加配置：
+
+```yaml
+- id: dsh-cross-agent
+  name: dsh-cross-agent
+  config:
+    sessionPermissionRules:
+      - { path: 'C:\work\public', preset: workspace-write }
+      - { path: 'C:\work\secret', preset: read-only }
+    sessionPermissionDefault: workspace-write   # 没命中规则时
+    allowRemotePermissionRaise: false           # 想让远端能提权才改 true
+    allowRemoteSessions: true                   # 关掉就是 403
+```
+
+规则按**最长前缀**匹配；远端请求里带的 `permission` 只能比规则更紧，更松会被夹住并回 `clamped: true`。
+
+## 5.6 时钟（没权限校时的机器）
+
+Windows 默认开着"自动设置时间"，但域策略或虚拟机快照会把它关掉，偏差一两分钟很常见。
+插件的签名带时间戳，校验窗口是 ±60 秒——但**窗口会平移到对端自己的钟**（按 beacon 里的 `ts`
+和 HTTP `Date` 头估），所以差个一两分钟不影响通信。差到小时级就真的该校时了（`w32tm /resync /force`）。
 
 ## 6. 出问题时
 

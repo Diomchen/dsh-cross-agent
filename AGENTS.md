@@ -15,6 +15,7 @@
 | `index.js` | 入口：`apply`、`Config`、`inject`、把所有东西接起来 | 业务逻辑 |
 | `src/service.js` | 组合根：`state()` / `act()` / `ask` / `sendFile` / `fetchFile` / 路由表 | IO 细节 |
 | `src/protocol.js` | 常量、beacon 编解码、HMAC 签名、nonce 窗口、X25519+HKDF | 任何 IO |
+| `src/clock.js` | 对端时钟基准：把 ±60s 窗口平移到对端的钟（窗宽不变） | 不碰协议 |
 | `src/identity.js` | deviceId、显示名、长期密钥 | 认识对端 |
 | `src/discovery.js` | UDP beacon/ack、地址表、本机实例注册表 | 不写连接状态 |
 | `src/peers.js` | 连接状态机、模式、放行、密钥派生 | 不碰会话与文件 |
@@ -24,8 +25,9 @@
 | `src/files.js` | 两阶段传输、sha256、收件箱、共享目录 | 不认识 agent |
 | `src/limits.js` | 滑动窗口限流 | 不写审计 |
 | `src/audit.js` | 1000 条环形审计 | 不做展示 |
+| `src/presets.js` | 会话权限档与"按目录上限"的纯规则（远端只能往紧调） | 不做 IO、不建会话 |
 | `src/store.js` | JSON 文件后端（原子写、0700） | 不定义表结构 |
-| `src/tools.js` | 6 个工具定义 | 不含逻辑 |
+| `src/tools.js` | 7 个工具定义 | 不含逻辑 |
 | `src/commands.js` | `/cross-agent` | 不含逻辑 |
 | `src/http-local.js` | `/cross-agent/state`、`/cross-agent/action` | 不含逻辑 |
 | `client.js` | 面板 + 底部状态条 | 不复制业务逻辑 |
@@ -54,8 +56,16 @@ node scripts/e2e.mjs         # 双实例端到端（真实 HTTP + HMAC + 落盘 
 
 没有 DSH 宿主也能跑：`src/session.js` 在测试里用假 `ctx`（见 `test/session.test.js`）。
 
-## 已知的宿主耦合
+## 已知的宿主耦合（票 01，已在真机验证过一轮）
 
-`src/session.js` 里 `sessionController.prompt` 的字段与 `session/event` 的事件名来自
-目录契约，**尚未在真机上逐字段验证**（票 01）。真机跑不通时先看
-[docs/harness-notes.md](docs/harness-notes.md) 里的"待验清单"。
+真机上确认过的形状（别再凭猜测改回去）：
+
+- `inject` **必须**是数组，且要含 `sessions` / `sessionController` / `workingDirectory` /
+  `permissionPresets` / `workspaceController`——cordis 的 ctx 是代理，访问没声明的服务直接抛。
+- 建会话：`sessionController.create({ workspaceId | cwd })` → `{ sessionId: "session-<uuid>" }`；
+  自己拼 UUID 会被 `prompt` 判成 `session not found`。
+- 投递：`prompt(request, signal)`，**signal 必填**。
+- 权限：`sessions.get(sessionId)` 拿到会话对象，再 `permissionPresets.set(session, preset)`。
+- 分组：`workspaceController.create({ path })` 幂等，返回 `{ workspace: { workspaceId, ... } }`。
+
+细节与踩坑记录见 [docs/harness-notes.md](docs/harness-notes.md)。

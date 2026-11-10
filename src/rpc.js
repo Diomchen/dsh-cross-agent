@@ -31,10 +31,12 @@ export function createRpcServer ({
   routes,
   limits,
   audit,
+  clock,
   log,
   now = () => Date.now()
 } = {}) {
   const nonces = createNonceCache({ now })
+  const skewed = new Map()
   let server = null
   let boundPort = 0
 
@@ -44,6 +46,28 @@ export function createRpcServer ({
     } catch {
       // ignore
     }
+  }
+
+  /**
+   * 时间窗：先是"按我们的钟算 ±60s"；不成立时再按"对端的钟"算一次
+   * （见 src/clock.js）。后者只是把同一个窗口平移到对端，不会放宽。
+   */
+  function acceptTimestamp (deviceId, ts) {
+    if (!Number.isFinite(ts)) return false
+    if (clock === undefined || clock === null) return Math.abs(now() - ts) <= CLOCK_SKEW_MS
+    if (!clock.accepts(deviceId, ts)) return false
+    const absolute = Math.abs(now() - ts)
+    if (absolute > CLOCK_SKEW_MS) noteSkew(deviceId, absolute)
+    return true
+  }
+
+  /** 偏差本身不是错，但要让人看得见：一台没校时的机器不会自己变好。 */
+  function noteSkew (deviceId, absolute) {
+    const at = now()
+    const previous = skewed.get(deviceId) ?? 0
+    if (at - previous < 10 * 60_000) return
+    skewed.set(deviceId, at)
+    warn(`对端 ${deviceId} 的时钟与本机相差约 ${Math.round(absolute / 1000)} 秒，已按对端广播的时钟校验`)
   }
 
   function header (req, name) {
@@ -57,7 +81,7 @@ export function createRpcServer ({
     const nonce = header(req, 'x-ca-nonce')
     const signature = header(req, 'x-ca-sig')
     if (typeof deviceId !== 'string' || deviceId === '') throw fail(401, 'missing-device')
-    if (!Number.isFinite(ts) || Math.abs(now() - ts) > CLOCK_SKEW_MS) throw fail(401, 'clock-skew')
+    if (!acceptTimestamp(deviceId, ts)) throw fail(401, 'clock-skew')
     if (typeof nonce !== 'string' || nonce.length < 8) throw fail(401, 'missing-nonce')
     if (typeof signature !== 'string') throw fail(401, 'missing-signature')
 
@@ -247,7 +271,7 @@ export function createRpcServer ({
   }
 }
 
-export function createRpcClient ({ identity, peers, resolve, log, now = () => Date.now() }) {
+export function createRpcClient ({ identity, peers, resolve, clock, log, now = () => Date.now() }) {
   function warn (message) {
     try {
       log?.warn?.(`[dsh-cross-agent] ${message}`)
@@ -259,7 +283,8 @@ export function createRpcClient ({ identity, peers, resolve, log, now = () => Da
   function signedHeaders ({ deviceId, method, path, bodyHash, keyHint }) {
     const key = keyHint ?? peers.keyFor(deviceId)
     if (key === null || key === undefined) throw new Error(`对端 ${deviceId} 还没有共享密钥（未放行）`)
-    const ts = now()
+    // 用**对端的钟**签：漏校时的对端只会拒绝按自己的钟算太远的请求。
+    const ts = now() + (clock?.offsetFor(deviceId) ?? 0)
     const nonce = createNonce()
     const sig = sign(key, { method, path, ts, nonce, bodyHash })
     return {
@@ -330,7 +355,14 @@ export function createRpcClient ({ identity, peers, resolve, log, now = () => Da
   }
 
   async function call (deviceId, method, path, body, options = {}) {
-    const result = await request(deviceId, { method, path, body, ...options })
+    let result = await request(deviceId, { method, path, body, ...options })
+    if (result.status === 401 && result.json?.reason === 'clock-skew' && options.retryClockSkew !== false) {
+      // 第一次打交道还不知道对端的钟走得快慢：从它的 Date 头学一次再试，
+      // 免得每台没校时的机器都要人先去发现层等一个 beacon。
+      if (clock?.observeDate?.(deviceId, result.headers) === true) {
+        result = await request(deviceId, { method, path, body, ...options, retryClockSkew: false })
+      }
+    }
     if (result.status === 0) throw new Error('没有响应')
     if (result.status >= 400) {
       const reason = result.json?.reason ?? `HTTP ${result.status}`

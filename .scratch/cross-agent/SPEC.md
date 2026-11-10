@@ -97,6 +97,12 @@
 校验顺序：连接表里有这条连接 → 时间窗 ±60s → nonce 未用过（内存 4096 条 LRU）→ 签名。
 任一失败 → `401 {"ok":false,"reason":"..."}`，并记一条审计（`denied`）。
 
+**时间窗以谁为准**：`x-ca-ts` 是发送方的墙钟，而两台机器可能各自不校准。窗口宽度恒为 ±60s，
+但判定的零点可以是**对端自己的钟**——由它在发现层 beacon 里的 `ts`（同一个墙钟）以及它的
+HTTP `Date` 头估出来（`src/clock.js`）。这只是一次平移，不是放宽：任意一条请求仍然只在
+±60s 内可能被接受，防重放强度不变。偏差超过 1 小时的**不采信**（那已经不算"没校时"）。
+发送侧用同一个偏差给 `x-ca-ts` 签名；第一次遇到 `401 clock-skew` 时从响应的 `Date` 头学一次再重试一次。
+
 ### 4.3 端点
 
 | 方法 | 路径 | 认证 | 说明 |
@@ -109,6 +115,12 @@
 | GET | `/ca/v1/file?path=<相对路径>` | 是 | 从本机**共享目录**（可多个根）流式下载；落在任何根之外的路径 404 |
 | GET | `/ca/v1/tools` | 是 | 列出本机对外开放（`exposedTools`）的工具名 |
 | POST | `/ca/v1/tool` | 是 | `{tool,args,waitMs}` → 在白名单里才执行，返回 `{ok,text,reason}` |
+| POST | `/ca/v1/session/create` | 是 | `{path,title?,permission?,waitMs}` → 在 `path` 那个目录下建会话（目录即项目分组，已注册则复用），返回 `{ok,sessionId,workspaceId,permission,clamped}` |
+
+`/session/create` 的权限是**接收方定上限**：`permission` 只是请求，比本目录规则更松的一律夹到上限
+（`clamped:true`），除非配置显式开了 `allowRemotePermissionRaise`。规则表是
+`sessionPermissionRules: [{path, preset}]`，最长前缀匹配；没命中用 `sessionPermissionDefault`。
+`allowRemoteSessions: false` 时这条端点直接 403。
 
 ### 4.4 密钥协商（TOFU）
 

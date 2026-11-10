@@ -14,14 +14,36 @@ export const name = 'dsh-cross-agent'
  * "把指令投进本机会话"，都是可选依赖：拿不到时插件仍然能启动（只是投不了信），
  * 所以只把真正必需的三个声明进 inject。
  */
-export const inject = ['webServer', 'tools', 'commands']
+/**
+ * 投递指令要碰宿主的会话服务，**必须在这里点名**：cordis 的 ctx 是代理，
+ * 访问没声明的服务会直接抛 `cannot get property "sessions" without inject`，
+ * 而不是返回 undefined。这一条曾让 `/ca/v1/ask` 在真机上恒 500。
+ *
+ * 这个版本的 cordis 只认数组（`{required, optional}` 会被当成两个服务名），
+ * 所以列出的都是"缺了插件就不该激活"的服务。`agents` / `agentLoop` 不是服务，
+ * 由 session.js 用 try/catch 试探，不写在这里。
+ */
+export const inject = ['webServer', 'tools', 'commands', 'sessions', 'sessionController', 'workingDirectory', 'permissionPresets', 'workspaceController']
 
 const shape = {
   discoveryPort: { type: 'number', default: 45881, description: 'UDP 发现端口；同一网段的所有机器要一致。' },
   port: { type: 'number', default: 45883, description: 'RPC 与文件传输端口。' },
   displayName: { type: 'string', default: '', description: '本机在局域网里显示的名字；留空用主机名。' },
   inboxDir: { type: 'string', default: '', description: '收到的文件落到哪；留空用 <工作目录>/.cross-agent/inbox。' },
-  shareDir: { type: 'string', default: '', description: '允许对端拉取的共享目录；留空用 <工作目录>/.cross-agent/share。' }
+  shareDir: { type: 'string', default: '', description: '允许对端拉取的共享目录；留空用 <工作目录>/.cross-agent/share。' },
+  peerAddresses: {
+    type: 'array',
+    default: [],
+    description: '静态对端地址（广播被 Wi-Fi 抑制时用）：每拍往这些地址单播探针，维持双方的心跳与在线状态。'
+  },
+  sessionPermissionRules: {
+    type: 'array',
+    default: [],
+    description: '按目录给新会话定权限上限：[{ path, preset }]，最长前缀匹配；preset 取 read-only / workspace-write / danger-full-access。'
+  },
+  sessionPermissionDefault: { type: 'string', default: 'workspace-write', description: '没有命中规则时，新会话的权限档。' },
+  allowRemotePermissionRaise: { type: 'boolean', default: false, description: '允许远端把新会话的权限提到高于本目录规则（默认不允许，只能往紧里调）。' },
+  allowRemoteSessions: { type: 'boolean', default: true, description: '是否允许被放行的对端在本机新建会话（会真的多出会话、占额度）。' }
 }
 
 /**
@@ -42,6 +64,14 @@ async function buildConfig () {
       inboxDir: z.string().default('').description('收到的文件落到哪；留空用 <工作目录>/.cross-agent/inbox。'),
       shareDir: z.string().default('').description('允许对端拉取的共享目录；留空用 <工作目录>/.cross-agent/share。'),
       shareRoots: z.array(z.string()).default([]).description('共享目录白名单（多个根）。相对路径相对工作目录；留空则只有 shareDir。'),
+      peerAddresses: z.array(z.string()).default([]).description('静态对端地址（广播被 Wi-Fi 抑制时用）：每拍往这些地址单播探针，维持双方的心跳与在线状态。'),
+      sessionPermissionRules: z.array(z.object({
+        path: z.string(),
+        preset: z.string()
+      })).default([]).description('按目录给新会话定权限上限：[{ path, preset }]，最长前缀匹配；preset 取 read-only / workspace-write / danger-full-access。'),
+      sessionPermissionDefault: z.string().default('workspace-write').description('没有命中规则时，新会话的权限档。'),
+      allowRemotePermissionRaise: z.boolean().default(false).description('允许远端把新会话的权限提到高于本目录规则（默认不允许，只能往紧里调）。'),
+      allowRemoteSessions: z.boolean().default(true).description('是否允许被放行的对端在本机新建会话（会真的多出会话、占额度）。'),
       exposedTools: z.array(z.string()).default([]).description('允许对端通过 peer_tool 调用的本机工具名。默认空 = 不开放任何工具。')
     })
   } catch {
@@ -57,7 +87,7 @@ export async function apply (ctx, config = {}) {
 
   let service
   try {
-    service = await createService(ctx, config)
+    service = await createService(ctx, { ...config, onWarn: appendBootstrap })
   } catch (error) {
     warn(ctx, `初始化失败，跨端会话不可用：${describe(error)}`)
     return

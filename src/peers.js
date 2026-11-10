@@ -118,7 +118,7 @@ export function createPeers ({
     const observed = seen.get(record.deviceId)
     return {
       deviceId: record.deviceId,
-      name: record.name || '未命名',
+      name: record.name || observed?.name || '未命名',
       state: record.state,
       mode: record.mode,
       online: observed?.online === true,

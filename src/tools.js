@@ -1,5 +1,5 @@
 /**
- * 4 个 agent 工具。名字以 `peer_` 开头：模型选工具时第一眼读的就是它。
+ * 7 个 agent 工具。名字以 `peer_` 开头：模型选工具时第一眼读的就是它。
  *
  * 每个工具只做一件事，描述里必须出现跨端的两个代价：
  *   - 延迟 = 对方一次 agent turn（秒到分钟），不是 RPC；
@@ -132,6 +132,60 @@ export async function registerTools (ctx, service, { log } = {}) {
         reply: result.reply ?? '',
         sessionId: result.sessionId ?? '',
         correlationId: result.correlationId ?? '',
+        reason: result.reason ?? ''
+      }
+    }
+  })))
+
+  disposers.push(ctx.tools.register(define({
+    name: 'peer_session_create',
+    description: '让另一台机器在它本机的某个目录下新建一条会话（目录即项目分组：已注册的目录会复用，新目录会当场注册成分组），并返回会话 id。新会话的权限上限由**对方**的配置决定，你只能要求更紧（只读），不能要求更松。对方是 confirm 模式时，它的人要先点同意；不点头就返回 awaiting-review。注意：这会在对方机器上真的多出一条会话、占它的额度。',
+    parameters: {
+      peer: { type: 'string', required: true, description: '对方的显示名或 deviceId。' },
+      path: { type: 'string', required: true, description: '对方机器上的绝对目录路径。已有项目就用它原来的目录；想新建分组就给一个新目录（目录必须已存在）。' },
+      title: { type: 'string', description: '新会话的标题；留空用目录名。' },
+      permission: { type: 'string', description: '想要的权限档：read-only / workspace-write / danger-full-access。只能比对方给该目录的上限更紧，更松会被夹住并在结果里标出。' },
+      wait_ms: { type: 'number', description: '等对方审核多久，默认 120000，上限 600000。' }
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          ok: { type: 'boolean', required: true },
+          sessionId: { type: 'string' },
+          workspaceId: { type: 'string' },
+          title: { type: 'string' },
+          permission: { type: 'string' },
+          requestedPermission: { type: 'string' },
+          clamped: { type: 'boolean' },
+          reason: { type: 'string' }
+        }
+      },
+      render: (_args, value) => [{
+        type: 'text',
+        text: value.ok === true
+          ? `已在对方建好会话 ${value.sessionId}（${value.title}，权限 ${value.permission}${value.clamped ? `；请求的 ${value.requestedPermission} 被夹到上限` : ''}）`
+          : `未建成：${value.reason === '' ? 'unknown' : value.reason}`
+      }]
+    },
+    isConcurrencySafe: () => false,
+    async execute (args) {
+      const result = await service.createPeerSession({
+        peer: args.peer,
+        path: args.path,
+        title: args.title ?? '',
+        permission: args.permission ?? '',
+        waitMs: args.wait_ms
+      })
+      return {
+        ok: result.ok === true,
+        sessionId: result.sessionId ?? '',
+        workspaceId: result.workspaceId ?? '',
+        title: result.title ?? '',
+        permission: result.permission ?? '',
+        requestedPermission: result.requestedPermission ?? '',
+        clamped: result.clamped === true,
         reason: result.reason ?? ''
       }
     }
