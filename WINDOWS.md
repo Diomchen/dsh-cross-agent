@@ -1,35 +1,52 @@
 # Windows 测试包说明（v0.2.4）
 
-这个包是**未在 Windows 实机验证过**的测试包。请按下面顺序走，任何一步不对就把日志发回来。
+这个包已在 Windows 11 实机跑通（发现、放行、指令、文件、远端建会话）。任何一步不对就把
+`%USERPROFILE%\.dsh\dsh-cross-agent\bootstrap.log` 和 `data\` 一起发回来。
 
 ## 1. 前置
 
 - DSH Desktop（或 `dsh`）已经能正常启动，Node ≥ 22.12。
 - 包：`dsh-cross-agent-0.2.4.tgz`。
 
-## 2. 安装（二选一）
+## 2. 安装 / 升级
 
-**A. 解包后按目录安装（推荐，路径最不容易出问题）**
-
-```powershell
-mkdir C:\temp\dsh-cross-agent
-tar -xzf dsh-cross-agent-0.2.4.tgz -C C:\temp\dsh-cross-agent --strip-components=1
-```
-
-然后在 DSH 里（或任何能调 `plugin_manager` 的地方）：
-
-```
-plugin_manager  action=install_bundle  target=C:\temp\dsh-cross-agent
-```
-
-**B. 直接装 tgz**
+先把 tgz 放到固定位置 `%USERPROFILE%\.dsh\packages\`，再用**完整路径 + `file:` 前缀**装：
 
 ```powershell
-dsh plugin install C:\path\to\dsh-cross-agent-0.2.4.tgz
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.dsh\packages" | Out-Null
+Copy-Item C:\path\to\dsh-cross-agent-0.2.4.tgz "$env:USERPROFILE\.dsh\packages\"
+dsh plugin --profile desktop add "file:$env:USERPROFILE\.dsh\packages\dsh-cross-agent-0.2.4.tgz"
 ```
 
-两种方式都会在 `%USERPROFILE%\.dsh\profiles\<profile>\node_modules` 里装一份。
-装完**重启 DSH**。
+装完**重启 DSH**（关进程再开）。验证版本：
+
+```powershell
+Get-Content "$env:USERPROFILE\.dsh\profiles\desktop\node_modules\dsh-cross-agent\package.json" |
+  Select-String '"version"'
+```
+
+### 三个容易踩的坑
+
+1. **没有 `dsh plugin install` 这个子命令**。`dsh plugin` 后面的参数是原样转给 pnpm 的，
+   要装包就是 `add`；`--profile <名字>` 要放在 `add` **之前**。
+2. **别在 agent 会话里装**。pnpm 的全局 store 在 `%LOCALAPPDATA%\pnpm\store\v11`，
+   在跨端会话的 `workspace-write` 沙箱里写不进去，会报
+   `EPERM mkdir ...\pnpm\store\v11`。用普通终端（先关掉 DSH）跑。
+3. **别用 `pnpm install --force` 去换 store**。那会把这个 profile 的所有插件依赖重装一遍，
+   中途失败宿主就起不来了。
+
+### 回滚
+
+旧包留在 `%USERPROFILE%\.dsh\packages\` 里，装回去就行，然后重启：
+
+```powershell
+dsh plugin --profile desktop add "file:$env:USERPROFILE\.dsh\packages\dsh-cross-agent-0.2.3.tgz"
+```
+
+### 开发用的临时安装（不推荐）
+
+把 tgz 解到工作区内，直接覆盖 `node_modules\dsh-cross-agent`，可以绕过 pnpm 的 store 限制。
+代价是 `package.json` 里的依赖仍指向旧版本，**下一次 `pnpm install` 会把它还原**。
 
 ## 3. 放行防火墙（Windows 一定会问）
 

@@ -149,9 +149,23 @@ allowRemoteSessions: true                   # 允许远端建会话（默认开�
 ## 开发
 
 ```sh
-node --test test/*.test.js   # 35 个单测
+node --test test/*.test.js   # 58 个单测
 node scripts/e2e.mjs         # 单进程双实例端到端（真实 HTTP/HMAC + 文件落盘）
 ```
+
+## 发版
+
+```sh
+npm pack       # → dsh-cross-agent-<version>.tgz
+```
+
+升级前先确认三件事：
+
+1. **两端版本要一起走**：协议常量、`inject` 列表、宿主接口形状任一处变了，另一头必须同级或更新；
+2. Windows 的安装/回滚步骤见 [WINDOWS.md](WINDOWS.md) §2（`dsh plugin --profile desktop add file:...`，
+   不是在 agent 会话里跑）；
+3. 发完在真机各跑一遍：`peer_tools`（验签名与时钟）、`peer_ask`（验会话桥）、
+   `peer_session_create`（验建会话与权限夹取）。
 
 ## 边界（不做）
 
