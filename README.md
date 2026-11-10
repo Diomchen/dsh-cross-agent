@@ -188,7 +188,8 @@ npm pack              # → dsh-cross-agent-<version>.tgz
 正式发版走 CI（`.github/workflows/ci.yml`）：改 `package.json` 的 `version`、提交、打 tag。
 
 ```sh
-git tag v0.2.7 && git push origin main --tags
+git tag -a v0.2.7 -m "v0.2.7：一句话说清楚这次改了什么"
+git push origin main v0.2.7
 ```
 
 流水线会先跑 4 组矩阵测试（ubuntu node 22/24、macos 22、windows 22；ubuntu 上再跑一次双实例端到端），

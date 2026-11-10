@@ -57,6 +57,14 @@ node scripts/smoke.mjs       # 单机验收：以已放行对端身份给本机�
 
 没有 DSH 宿主也能跑：`src/session.js` 在测试里用假 `ctx`（见 `test/session.test.js`）。
 
+## CI 与发版
+
+- `.github/workflows/ci.yml`：矩阵单测（ubuntu node 22/24、macos 22、windows 22）+ ubuntu 上一次
+  双实例 e2e；只有推 `v*` tag 才真实 `npm pack` 并把 tgz 挂到 Release。
+- `scripts/verify-pack.mjs` 守打包内容：必需文件齐全、`test/` `scripts/` `.github/` 不许混进去、
+  tag 与 `package.json` 版本一致。改 `package.json` 的 `files` 时，同步改它的 `REQUIRED`。
+- 发版 = 打 tag：`git tag -a vX.Y.Z -m "..." && git push origin main vX.Y.Z`，不要手传 tgz。
+
 ## 已知的宿主耦合（票 01，已在真机验证过一轮）
 
 真机上确认过的形状（别再凭猜测改回去）：
