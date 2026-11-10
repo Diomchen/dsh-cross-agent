@@ -46,16 +46,22 @@ function fakeCtx (workspace, replies) {
     tools: {
       async execute ({ calls, agent }) {
         const call = calls[0]
+        // 真机形状：结果是嵌套的 { callId, result: { isError, content, meta } }
         return {
           results: [{
             callId: call.id,
-            isError: false,
-            content: [{ type: 'text', text: `B 执行了 ${call.name}(${call.arguments}) 于会话 ${agent.id.slice(0, 8)}` }]
+            result: {
+              isError: false,
+              content: [{ type: 'text', text: `B 执行了 ${call.name}(${call.arguments}) 于会话 ${agent.id.slice(0, 8)}` }],
+              meta: {}
+            }
           }]
         }
       }
     },
     sessionController: {
+      // 真机上 agent 注册表挂在 sessionController 上，方法返回 { agent }
+      agents: { liveAgent: (id) => ({ agent: { id } }) },
       async prompt (request) {
         const text = request.content?.[0]?.text ?? ''
         const reply = replies(text)

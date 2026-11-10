@@ -529,13 +529,16 @@ export async function createService (ctx, config = {}) {
       })
       const first = Array.isArray(batch?.results) ? batch.results[0] : undefined
       if (first === undefined) return { ok: false, reason: 'no-result' }
-      const isError = first.isError === true
-      const text = textFromResult(first)
+      // 实测形状：`{ callId, result: { isError, content: [{type:'text',text}], meta } }`。
+      // 早先按 `first.isError` / `first.content` 读，永远拿到空文本且永远判不出错误。
+      const payload = first?.result ?? first
+      const isError = payload?.isError === true
+      const text = textFromResult(payload)
       return {
         ok: !isError,
         isError,
         text: text.slice(0, 16 * 1024),
-        error: isError ? (first?.error?.message ?? 'tool-error') : ''
+        error: isError ? (payload?.error?.message ?? 'tool-error') : ''
       }
     } catch (error) {
       return { ok: false, reason: error?.message ?? String(error) }

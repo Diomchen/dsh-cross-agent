@@ -247,10 +247,34 @@ export function createSessionBridge ({ ctx, store, log, now = () => Date.now() }
   }
 
   /** 跨端工具调用要一个 Agent，而不只是会话 id：拿不到就让调用方明确失败。 */
+  /**
+   * 拿这条会话的 agent（`peer_tool` 执行远端工具时要它）。
+   *
+   * 宿主这里没有 `ctx.agents` 服务：agent 注册表挂在 `sessionController.agents` 上，
+   * 方法返回的是 `{ agent }` 而不是 agent 本身。早先按 `ctx.agents.get()` 写，
+   * 结果永远拿到 null → `peer_tool` 在真机上恒 409 session-not-ready。
+   * `liveAgent` 只取活着的，`resolveAgent` 会顺带把会话激活——先轻后重。
+   */
   async function agentFor (peer) {
     const sessionId = await ensure(peer)
-    const agent = controllers().agents?.get?.(sessionId)
-    return agent ?? null
+    const registry = controllers().controller?.agents
+    // 退路：更早的宿主（或测试桩）把 agent 注册表放在 `ctx.agents` 上。
+    const legacy = controllers().agents
+    if (registry === undefined || registry === null) {
+      return legacy?.get?.(sessionId) ?? null
+    }
+    for (const name of ['liveAgent', 'resolveAgent']) {
+      const resolveAgent = registry[name]
+      if (typeof resolveAgent !== 'function') continue
+      try {
+        const entry = await resolveAgent.call(registry, sessionId)
+        const agent = entry?.agent ?? entry
+        if (agent !== undefined && agent !== null) return agent
+      } catch (error) {
+        warn(`取 agent 失败（${name}）：${error?.message ?? error}`)
+      }
+    }
+    return null
   }
 
   return { ensure, agentFor, deliver, queueNotice, arm }

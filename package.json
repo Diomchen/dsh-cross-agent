@@ -1,6 +1,6 @@
 {
   "name": "dsh-cross-agent",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "description": "局域网跨端 agent 会话：两台机器上的 DSH agent 互相下达指令、互传文件。 · LAN peer sessions for DeepSeek Harness.",
   "type": "module",
   "main": "index.js",

@@ -38,7 +38,9 @@
 | 建会话 | `ctx.sessionController.create({ cwd, title })` → `{ sessionId: "session-<uuid>", agentPreset }` | 返回的 id **带 `session-` 前缀**；自己 `crypto.randomUUID()` 拼一个去 `prompt`，宿主回 `session "..." not found` |
 | 投递 | `sessionController.prompt({ requestId, sessionId, mode:'queue', content:[{type:'text',text}] }, signal)` | 第二个参数 `signal` **必填**：宿主内部直接 `signal.throwIfAborted()`，传 `undefined` 会炸在宿主栈里（`Cannot read properties of undefined`） |
 | 默认工作目录 | `ctx.workingDirectory.defaultDirectory`（**必须注入** `workingDirectory`，否则读它直接抛，被 catch 吞掉后退到 `$DSH_HOME/dsh-cross-agent/`） | 表现为收件箱/共享目录跑到工作区外，`workspace-write` 沙箱的 agent 写不进去 |
-| 列会话 | `sessionController.list(query, signal)` → `{ items: [{ sessionId, cwd, running, projections }] }` | 用它核对"这条跨端会话还在不在"，比 `sessions.get` 可靠（`sessions` 上没有 `get`） |
+| 列会话 | `sessionController.list(query, signal)` → `{ items: [{ sessionId, cwd, running, projections }] }` | 用它核对"这条跨端会话还在不在" |
+| 取 agent（`peer_tool` 用） | `sessionController.agents.liveAgent(sessionId)` → `{ agent }`（`resolveAgent` 同形，但会顺带激活会话） | **没有 `ctx.agents` 服务**。早先按 `ctx.agents.get()` 写，永远 null → `peer_tool` 恒 409 `session-not-ready` |
+| 执行工具 | `ctx.tools.execute({ calls:[{type:'tool-call',id,name,arguments}], signal, agent })` → `{ results: [{ callId, result: { isError, content:[{type:'text',text}], meta } }] }` | 结果是**嵌套**的：读 `first.content` 永远拿不到文本、`first.isError` 永远 false |
 
 `ctx.agents` / `ctx.agentLoop` **不是服务**：直接读会抛，所以 `src/session.js` 用 `service()` 逐项 try/catch 试探，缺了就当没有。
 
