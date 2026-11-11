@@ -1,7 +1,7 @@
 {
   "name": "dsh-cross-agent",
-  "version": "0.2.8",
-  "description": "局域网跨端 agent 会话：两台机器上的 DSH agent 互相下达指令、互传文件。 · LAN peer sessions for DeepSeek Harness.",
+  "version": "0.2.9",
+  "description": "局域网跨端 agent 会话：两台机器上的 DSH 互相发现、放行、下指令、传文件、按白名单调用具名工具。 · LAN peer sessions for DeepSeek Harness.",
   "type": "module",
   "main": "index.js",
   "exports": {
@@ -26,7 +26,8 @@
     "check": "node --check index.js && node --check client.js && node --test --test-concurrency=4 test/*.test.js",
     "e2e": "node scripts/e2e.mjs",
     "verify:pack": "node scripts/verify-pack.mjs",
-    "fake-peer": "node scripts/fake-peer.mjs"
+    "fake-peer": "node scripts/fake-peer.mjs",
+    "prepublishOnly": "npm run check"
   },
   "engines": {
     "node": ">=22.12.0"
@@ -48,6 +49,10 @@
     "peer"
   ],
   "license": "MIT",
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org/",
+    "access": "public"
+  },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"

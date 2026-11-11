@@ -1,16 +1,18 @@
-# Windows 测试包说明（v0.2.8）
+# Windows 测试包说明（v0.2.9）
 
 0.2.6 已在 Windows 11 实机跑通（发现、放行、指令、文件、远端建会话）。
 0.2.7 只改远端建会话的权限 apply：等会话注册后再 `permissionPresets.set`，并用 `current()` 复核；
 建会话结果多了 `applied` / `effective` / `verified`。装完重点按 §5.5 复核。
 0.2.8 重做面板（待办优先、活动流合并、权限模式开关、详情折叠）+ 对端别名（只存本机）；
 「待审核」里的连接请求点「放行」现在会真正放行对端。升级后照常按 §5 跑一遍。
+0.2.9 只改文档与打包元数据：README 重写、商店图标、加 `registryDir` 配置项（同机多实例用），
+协议与 0.2.8 相同，可以混装。装完照常按 §5 跑一遍。
 任何一步不对就把 `%USERPROFILE%\.dsh\dsh-cross-agent\bootstrap.log` 和 `data\` 一起发回来。
 
 ## 1. 前置
 
 - DSH Desktop（或 `dsh`）已经能正常启动，Node ≥ 22.12。
-- 包：`dsh-cross-agent-0.2.8.tgz`。
+- 包：`dsh-cross-agent-0.2.9.tgz`。
 
 ## 2. 安装 / 升级
 
@@ -18,8 +20,14 @@
 
 ```powershell
 New-Item -ItemType Directory -Force "$env:USERPROFILE\.dsh\packages" | Out-Null
-Copy-Item C:\path\to\dsh-cross-agent-0.2.8.tgz "$env:USERPROFILE\.dsh\packages\"
-dsh plugin --profile desktop add "file:$env:USERPROFILE\.dsh\packages\dsh-cross-agent-0.2.8.tgz"
+Copy-Item C:\path\to\dsh-cross-agent-0.2.9.tgz "$env:USERPROFILE\.dsh\packages\"
+dsh plugin --profile desktop add "file:$env:USERPROFILE\.dsh\packages\dsh-cross-agent-0.2.9.tgz"
+```
+
+机器能直连 npm 时也可以直接装，省掉手工放包：
+
+```powershell
+dsh plugin --profile desktop add dsh-cross-agent
 ```
 
 装完**重启 DSH**（关进程再开）。验证版本：
@@ -44,7 +52,7 @@ Get-Content "$env:USERPROFILE\.dsh\profiles\desktop\node_modules\dsh-cross-agent
 旧包留在 `%USERPROFILE%\.dsh\packages\` 里，装回去就行，然后重启：
 
 ```powershell
-dsh plugin --profile desktop add "file:$env:USERPROFILE\.dsh\packages\dsh-cross-agent-0.2.3.tgz"
+dsh plugin --profile desktop add "file:$env:USERPROFILE\.dsh\packages\dsh-cross-agent-0.2.8.tgz"
 ```
 
 ### 开发用的临时安装（不推荐）

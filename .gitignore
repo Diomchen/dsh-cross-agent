@@ -2,3 +2,4 @@ node_modules/
 .cross-agent/
 *.tgz
 .DS_Store
+.npm-tmp/

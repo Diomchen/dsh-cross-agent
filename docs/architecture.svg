@@ -1,0 +1,78 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 430" width="980" height="430" role="img" aria-labelledby="title desc">
+  <title id="title">dsh-cross-agent 架构</title>
+  <desc id="desc">两台机器上的 DSH 通过 UDP 发现、带 HMAC 签名的 TCP 请求和 sha256 文件回执通信；只有放行并核对指纹后才建立跨端会话。</desc>
+
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0B1220"/>
+      <stop offset="1" stop-color="#111C33"/>
+    </linearGradient>
+    <marker id="arrow-teal" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#5EEAD4"/>
+    </marker>
+    <marker id="arrow-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#60A5FA"/>
+    </marker>
+    <marker id="arrow-amber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#FBBF24"/>
+    </marker>
+    <style>
+      .card { fill: #111C33; stroke: #24314D; stroke-width: 1.5; }
+      .title { fill: #F8FAFC; font-size: 24px; font-weight: 700; }
+      .sub { fill: #94A3B8; font-size: 14px; }
+      .card-title { fill: #E2E8F0; font-size: 16px; font-weight: 650; }
+      .card-sub { fill: #94A3B8; font-size: 12px; }
+      .row { fill: #CBD5E1; font-size: 12.5px; }
+      .muted { fill: #64748B; font-size: 11.5px; }
+      .lane { fill: #94A3B8; font-size: 12px; }
+      .pill { fill: #0F172A; stroke: #334155; stroke-width: 1; }
+      .pill-text { fill: #E2E8F0; font-size: 12px; }
+      .foot { fill: #94A3B8; font-size: 12.5px; }
+      text { font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif; }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="980" height="430" rx="20" fill="url(#bg)"/>
+  <rect x="0.75" y="0.75" width="978.5" height="428.5" rx="19.25" fill="none" stroke="#1E293B"/>
+
+  <text x="40" y="54" class="title">dsh-cross-agent</text>
+  <text x="40" y="80" class="sub">两台机器，一条受控的跨端通道</text>
+
+  <rect x="40" y="116" width="300" height="220" rx="16" class="card"/>
+  <rect x="640" y="116" width="300" height="220" rx="16" class="card"/>
+
+  <text x="64" y="150" class="card-title">机器 A · DSH</text>
+  <text x="64" y="170" class="card-sub">agent 会话 + 「跨端 agent」面板</text>
+  <text x="64" y="204" class="row">身份　deviceId · X25519</text>
+  <text x="64" y="230" class="row">权限　open / confirm</text>
+  <text x="64" y="256" class="row">文件　.cross-agent/inbox</text>
+  <text x="64" y="282" class="row">审计　最近 1000 条</text>
+  <text x="64" y="314" class="muted">放行是单向的：A 放行 B，只代表 B 能指挥 A</text>
+
+  <text x="664" y="150" class="card-title">机器 B · DSH</text>
+  <text x="664" y="170" class="card-sub">agent 会话 + 「跨端 agent」面板</text>
+  <text x="664" y="204" class="row">身份　deviceId · X25519</text>
+  <text x="664" y="230" class="row">权限　open / confirm</text>
+  <text x="664" y="256" class="row">文件　.cross-agent/share</text>
+  <text x="664" y="282" class="row">审计　最近 1000 条</text>
+  <text x="664" y="314" class="muted">反过来要能指挥 B，B 也要放行 A</text>
+
+  <text x="490" y="144" text-anchor="middle" class="lane">放行 + 两端核对 8 位指纹</text>
+  <rect x="393" y="154" width="194" height="22" rx="11" class="pill"/>
+  <circle cx="409" cy="165" r="4" fill="#5EEAD4"/>
+  <text x="490" y="169" text-anchor="middle" class="pill-text">未放行 = 什么都进不来</text>
+
+  <line x1="348" y1="196" x2="632" y2="196" stroke="#5EEAD4" stroke-width="2" marker-start="url(#arrow-teal)" marker-end="url(#arrow-teal)"/>
+  <text x="490" y="186" text-anchor="middle" class="lane">UDP 45881 · 发现 / 心跳</text>
+
+  <line x1="348" y1="252" x2="632" y2="252" stroke="#60A5FA" stroke-width="2" marker-start="url(#arrow-blue)" marker-end="url(#arrow-blue)"/>
+  <text x="490" y="242" text-anchor="middle" class="lane">TCP 45883 · HMAC 签名 + nonce 防重放</text>
+
+  <line x1="348" y1="308" x2="632" y2="308" stroke="#FBBF24" stroke-width="2" marker-start="url(#arrow-amber)" marker-end="url(#arrow-amber)"/>
+  <text x="490" y="298" text-anchor="middle" class="lane">文件 ≤ 100 MiB · sha256 回执</text>
+
+  <line x1="40" y1="368" x2="940" y2="368" stroke="#1E293B"/>
+  <circle cx="52" cy="395" r="4" fill="#FBBF24"/>
+  <text x="66" y="399" class="foot">消息即命令：指令只投给对方的 agent，由它自己决定怎么做；不开放远端 shell。</text>
+  <text x="940" y="399" text-anchor="end" class="muted">LAN only · no public relay</text>
+</svg>

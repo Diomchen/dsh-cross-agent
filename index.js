@@ -31,6 +31,8 @@ const shape = {
   displayName: { type: 'string', default: '', description: '本机在局域网里显示的名字；留空用主机名。' },
   inboxDir: { type: 'string', default: '', description: '收到的文件落到哪；留空用 <工作目录>/.cross-agent/inbox。' },
   shareDir: { type: 'string', default: '', description: '允许对端拉取的共享目录；留空用 <工作目录>/.cross-agent/share。' },
+  shareRoots: { type: 'array', default: [], description: '共享目录白名单（多个根）。相对路径相对工作目录；留空则只有 shareDir。' },
+  registryDir: { type: 'string', default: '', description: '同一台机器上多个独立 DSH_HOME 共享的实例注册表目录；留空用 $DSH_HOME/dsh-cross-agent/instances。' },
   peerAddresses: {
     type: 'array',
     default: [],
@@ -43,7 +45,8 @@ const shape = {
   },
   sessionPermissionDefault: { type: 'string', default: 'workspace-write', description: '没有命中规则时，新会话的权限档。' },
   allowRemotePermissionRaise: { type: 'boolean', default: false, description: '允许远端把新会话的权限提到高于本目录规则（默认不允许，只能往紧里调）。' },
-  allowRemoteSessions: { type: 'boolean', default: true, description: '是否允许被放行的对端在本机新建会话（会真的多出会话、占额度）。' }
+  allowRemoteSessions: { type: 'boolean', default: true, description: '是否允许被放行的对端在本机新建会话（会真的多出会话、占额度）。' },
+  exposedTools: { type: 'array', default: [], description: '允许对端通过 peer_tool 调用的本机工具名。默认空 = 不开放任何工具。' }
 }
 
 /**
@@ -64,6 +67,7 @@ async function buildConfig () {
       inboxDir: z.string().default('').description('收到的文件落到哪；留空用 <工作目录>/.cross-agent/inbox。'),
       shareDir: z.string().default('').description('允许对端拉取的共享目录；留空用 <工作目录>/.cross-agent/share。'),
       shareRoots: z.array(z.string()).default([]).description('共享目录白名单（多个根）。相对路径相对工作目录；留空则只有 shareDir。'),
+      registryDir: z.string().default('').description('同一台机器上多个独立 DSH_HOME 共享的实例注册表目录；留空用 $DSH_HOME/dsh-cross-agent/instances。'),
       peerAddresses: z.array(z.string()).default([]).description('静态对端地址（广播被 Wi-Fi 抑制时用）：每拍往这些地址单播探针，维持双方的心跳与在线状态。'),
       sessionPermissionRules: z.array(z.object({
         path: z.string(),
