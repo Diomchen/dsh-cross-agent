@@ -146,8 +146,8 @@ async function main () {
     assert.equal(pendingHello.length, 1)
     console.log('✓ 握手请求已到达 B，待放行 1 条')
 
-    // 2. B 的人放行 → 两端 admitted 且指纹一致
-    await B.peers.approve(A.identity.deviceId)
+    // 2. B 的人从面板点"放行" → 走的是 act('approve')，必须真的放行对端（而不只是清队列）
+    await B.act('approve', { id: pendingHello[0].id })
     assert.equal(B.peers.get(A.identity.deviceId).state, 'admitted')
     assert.equal(A.peers.get(B.identity.deviceId).state, 'admitted')
     const keyA = A.peers.keyFor(B.identity.deviceId)
@@ -155,8 +155,15 @@ async function main () {
     assert.equal(keyA.toString('hex'), keyB.toString('hex'))
     console.log('✓ 已放行，两端指纹一致：', B.peers.get(A.identity.deviceId).fingerprint)
 
+    // 2.5 A 给 B 起一个只在本机生效的别名，并用别名投递（工具参数认别名）
+    await A.act('alias', { deviceId: B.identity.deviceId, alias: 'Windows 测试机' })
+    const aliased = (await A.state()).peers.find((peer) => peer.deviceId === B.identity.deviceId)
+    assert.equal(aliased.alias, 'Windows 测试机')
+    assert.equal((await B.state()).peers.find((peer) => peer.deviceId === A.identity.deviceId).alias, '', '别名不该传过网线')
+    console.log('✓ 本机别名已保存，且没有传给对端')
+
     // 3. confirm 模式下发指令：B 侧出现待审核，A 收到 awaiting-review
-    const first = await A.ask({ peer: B.identity.deviceId, text: '帮我看看今天是星期几', waitMs: 1200 })
+    const first = await A.ask({ peer: 'Windows 测试机', text: '帮我看看今天是星期几', waitMs: 1200 })
     assert.equal(first.ok, false)
     assert.equal(first.reason, 'awaiting-review')
     const pendingAsk = B.approvals.list({ status: 'pending' }).find((item) => item.kind === 'ask')
@@ -169,6 +176,13 @@ async function main () {
     assert.equal(second.ok, true, `期望拿到答复，实际：${JSON.stringify(second)}`)
     assert.match(second.reply, /B 机答复/)
     console.log('✓ 记住 24h 生效，指令直接送达并拿到答复：', second.reply)
+
+    // 4.5 审计带上方向：B 是收到，A 是发出
+    const auditB = await B.audit.recent(50)
+    const auditA = await A.audit.recent(50)
+    assert.ok(auditB.some((row) => row.kind === 'instruction' && row.direction === 'in'), 'B 侧应有一条"收到"的指令审计')
+    assert.ok(auditA.some((row) => row.kind === 'instruction' && row.direction === 'out'), 'A 侧应有一条"发出"的指令审计')
+    console.log('✓ 指令方向已写入审计（in / out）')
 
     // 5. 文件传输 A → B
     const filePath = path.join(TMP, 'report.txt')

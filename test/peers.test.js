@@ -100,3 +100,55 @@ test('改成 open 需要二次确认', async () => {
     for (const node of registry.values()) await fs.rm(node.dir, { recursive: true, force: true })
   }
 })
+
+test('别名只存本机：设置、解析、落盘、清除', async () => {
+  const registry = new Map()
+  const a = await makeNode('A', registry)
+  const b = await makeNode('B', registry)
+  try {
+    const view = await a.peers.setAlias(b.identity.deviceId, 'Windows 测试机', 'B')
+    assert.equal(view.alias, 'Windows 测试机')
+    assert.equal(a.peers.get(b.identity.deviceId).alias, 'Windows 测试机')
+
+    const row = a.peers.list().find((peer) => peer.deviceId === b.identity.deviceId)
+    assert.equal(row.alias, 'Windows 测试机')
+    assert.equal(row.name, 'B')
+
+    // 大小写不敏感；deviceId 仍然精确优先
+    assert.equal(a.peers.resolve('windows 测试机').deviceId, b.identity.deviceId)
+    assert.equal(a.peers.resolve(b.identity.deviceId).deviceId, b.identity.deviceId)
+
+    const stored = await a.store.get('peers', b.identity.deviceId)
+    assert.equal(stored.alias, 'Windows 测试机')
+
+    const reopened = createPeers({ store: a.store, identity: a.identity, audit: a.audit, approvals: a.approvals, send: async () => {} })
+    await reopened.open()
+    assert.equal(reopened.get(b.identity.deviceId).alias, 'Windows 测试机')
+
+    await a.peers.setAlias(b.identity.deviceId, '')
+    assert.equal(a.peers.get(b.identity.deviceId).alias, '')
+    assert.equal(a.peers.resolve('Windows 测试机'), null)
+  } finally {
+    for (const node of registry.values()) await fs.rm(node.dir, { recursive: true, force: true })
+  }
+})
+
+test('别名之间不能撞车；和显示名撞车时别名优先', async () => {
+  const registry = new Map()
+  const a = await makeNode('A', registry)
+  const b = await makeNode('B', registry)
+  const c = await makeNode('C', registry)
+  try {
+    await a.peers.setAlias(b.identity.deviceId, 'Windows', 'B')
+    await assert.rejects(() => a.peers.setAlias(c.identity.deviceId, 'windows', 'C'), /已经用在另一个对端/)
+
+    await a.peers.setAlias(c.identity.deviceId, 'B', 'C')
+    assert.equal(a.peers.resolve('B').deviceId, c.identity.deviceId, '本机别名应该压过另一个对端的显示名')
+
+    await assert.rejects(() => a.peers.setAlias(a.identity.deviceId, '自己'), /本机/)
+    await assert.rejects(() => a.peers.setAlias('not-a-uuid', 'x'), /不合法/)
+    await assert.rejects(() => a.peers.setAlias(crypto.randomUUID(), '幽灵'), /没有这个对端/)
+  } finally {
+    for (const node of registry.values()) await fs.rm(node.dir, { recursive: true, force: true })
+  }
+})

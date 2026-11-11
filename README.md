@@ -47,13 +47,30 @@ curl -s http://127.0.0.1:<DSH端口>/cross-agent/state | jq '.state.self'
 ## 两台机器怎么连（零配置）
 
 1. 两台机器装同一个插件，确认**在同一网段**、防火墙放行 `45881/udp` 与 `45883/tcp`。
-2. 打开任意一端的 Web UI，侧栏/主区进「跨端 agent」：几秒内对端会带着 `已发现` 出现。
-3. 点「请求连接」→ 对方面板上出现一条**待审核**的「连接请求」→ 对方点「放行」。
+2. 打开任意一端的 Web UI，侧栏/主区进「跨端 agent」：几秒内对端会出现在「对端」里，写着「在局域网里发现了它」。
+3. 点「请求连接」→ 对方面板的「需要你决定」里出现一条「连接请求」→ 对方点「放行」。
 4. 两端显示同一个**指纹**（8 个十六进制字符）。不一致就说明中间有人在动包，别继续。
-5. 默认模式是 `confirm`。要让它不打扰人，在那一侧点「改开放」并二次确认。
+5. 默认模式是「需要审核」。要让它不打扰人，在那一侧把权限模式切成「完全开放」并二次确认。
 
 注意：**放行是单向的**。A 放行 B = 允许 B 给 A 的 agent 下指令；要让 A 也能指挥 B，B 也要放行 A。
 两边都放行之后，两端会各建一个 `跨端 · 对方名字` 的会话。
+
+## 给对端起别名（只在本机生效）
+
+对端卡片上的机器名（比如 `DESKTOP-699DN63`）不好记，点名字旁边的铅笔就能起个别名，比如「家里的 Windows」。
+别名只存本机，不会传给对端，也不会改对端自己的显示名或已经建好的跨端会话标题。
+之后面板、搜索，以及 agent 工具的 `peer` 参数（`peer_ask` / `peer_file_send` …）都能直接用这个别名：
+
+```
+/cross-agent alias DESKTOP-699DN63 家里的 Windows
+/cross-agent alias DESKTOP-699DN63          # 清除别名
+```
+
+别名里有空格时，命令里用引号括起来：`/cross-agent mode "家里的 Windows" confirm`。
+面板上点按钮不需要引号。
+
+本机的名字（对端看到的显示名）在「详情 → 本机名」里改，或 `/cross-agent rename <新名字>`；
+对端下次握手时会看到新名字。
 
 ## 两台机器之外的场景
 
@@ -108,6 +125,9 @@ $DSH_HOME/dsh-cross-agent/
 
 `peer_session_create` 的权限有个硬边界：**远端可以往紧里调，不能自己往松里调**。
 新会话能开到哪一档，由接收方配置里的"按目录上限"决定，超出就夹住并在结果里标 `clamped: true`。
+结果里的 `permission` 是**解析出的目标档**；`applied` / `effective` / `verified` 才是实际生效情况。
+`applied: false` 表示宿主没有把权限设上（例如会话还没注册、`permissionPresets` 不可用），
+这时不要把它当成目标权限的会话——`effective` 会给出实际档，读不到就是 `null`。
 
 ```yaml
 # 接收方：按目录给新会话定权限上限（最长前缀匹配）
@@ -134,7 +154,8 @@ allowRemoteSessions: true                   # 允许远端建会话（默认开�
 /cross-agent mode <名字> open --yes
 /cross-agent mode <名字> confirm
 /cross-agent block <名字>
-/cross-agent rename <新名字>
+/cross-agent alias <名字> [新别名]   # 起/改本机别名；不写新别名 = 清除
+/cross-agent rename <新名字>        # 改本机显示名（对端下次握手时看到）
 ```
 
 ## 跨端工具：先想清楚再开
@@ -188,12 +209,12 @@ npm pack              # → dsh-cross-agent-<version>.tgz
 正式发版走 CI（`.github/workflows/ci.yml`）：改 `package.json` 的 `version`、提交、打 tag。
 
 ```sh
-git tag -a v0.2.7 -m "v0.2.7：一句话说清楚这次改了什么"
-git push origin main v0.2.7
+git tag -a v0.2.8 -m "v0.2.8：一句话说清楚这次改了什么"
+git push origin main v0.2.8
 ```
 
 流水线会先跑 4 组矩阵测试（ubuntu node 22/24、macos 22、windows 22；ubuntu 上再跑一次双实例端到端），
-然后真实 `npm pack`，把 `dsh-cross-agent-0.2.7.tgz` 与 `SHA256SUMS.txt` 挂到 `v0.2.7` 的 Release。
+然后真实 `npm pack`，把 `dsh-cross-agent-0.2.8.tgz` 与 `SHA256SUMS.txt` 挂到 `v0.2.8` 的 Release。
 tag 和 `package.json` 版本对不上会直接失败。
 
 升级前先确认三件事：

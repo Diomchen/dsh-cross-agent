@@ -47,6 +47,8 @@ export function createPeers ({
     return {
       deviceId: value.deviceId,
       name: clampName(value.name),
+      // 本机给对端起的外号：只存本机、不上线，也不改对端的显示名。
+      alias: clampName(value.alias),
       publicKey: typeof value.publicKey === 'string' ? value.publicKey : null,
       key: typeof value.key === 'string' ? value.key : null,
       fingerprint: typeof value.fingerprint === 'string' ? value.fingerprint : null,
@@ -100,6 +102,7 @@ export function createPeers ({
       rows.push({
         deviceId: row.deviceId,
         name: row.name || '未命名',
+        alias: '',
         state: 'discovered',
         mode: 'confirm',
         online: row.online,
@@ -110,7 +113,8 @@ export function createPeers ({
     }
     return rows.sort((a, b) => {
       const rank = (row) => (row.state === 'admitted' ? 0 : row.state === 'pending' ? 1 : 2)
-      return rank(a) - rank(b) || a.name.localeCompare(b.name)
+      // 人对端起了别名时，列表按他认得的名字排
+      return rank(a) - rank(b) || (a.alias || a.name).localeCompare(b.alias || b.name)
     })
   }
 
@@ -119,6 +123,7 @@ export function createPeers ({
     return {
       deviceId: record.deviceId,
       name: record.name || observed?.name || '未命名',
+      alias: record.alias || '',
       state: record.state,
       mode: record.mode,
       online: observed?.online === true,
@@ -311,6 +316,52 @@ export function createPeers ({
     return true
   }
 
+  /**
+   * 给对端起本机别名（只在本机用）。传空字符串就是清除。
+   *
+   * 两个约束：别名只在连接表里，永远不进 beacon/hello；别名之间不能撞车，
+   * 否则 agent 用 `peer` 找人就只能碰运气。和另一个对端的显示名撞不拦——
+   * 解析时别名优先，这是本机的人明确表达过的偏好。
+   */
+  async function setAlias (deviceId, rawAlias, name = '') {
+    if (!isUuid(deviceId)) throw new Error('deviceId 不合法')
+    if (deviceId === identity.deviceId) throw new Error('不能给本机设别名')
+    const alias = clampName(rawAlias)
+    if (alias !== '') {
+      const lower = alias.toLowerCase()
+      for (const other of records.values()) {
+        if (other.deviceId === deviceId) continue
+        if ((other.alias ?? '').toLowerCase() === lower) {
+          throw new Error(`别名「${alias}」已经用在另一个对端上了`)
+        }
+      }
+    }
+    const existing = records.get(deviceId)
+    if (existing === undefined && name === '') {
+      throw new Error('没有这个对端，先等它出现在对端列表里')
+    }
+    const record = existing ?? ensure(deviceId, name)
+    record.alias = alias
+    await persist(record)
+    return view(record)
+  }
+
+  /** 按 deviceId → 别名 → 显示名解析，都不区分大小写（deviceId 精确）。 */
+  function resolve (ref) {
+    const value = typeof ref === 'string' ? ref.trim() : ''
+    if (value === '') return null
+    const direct = records.get(value)
+    if (direct !== undefined) return direct
+    const lower = value.toLowerCase()
+    for (const record of records.values()) {
+      if (record.alias !== '' && record.alias.toLowerCase() === lower) return record
+    }
+    for (const record of records.values()) {
+      if (record.name !== '' && record.name.toLowerCase() === lower) return record
+    }
+    return null
+  }
+
   async function setMode (deviceId, mode, { confirmed = false } = {}) {
     if (mode !== 'open' && mode !== 'confirm') throw new Error('mode 只能是 open 或 confirm')
     if (mode === 'open' && confirmed !== true) {
@@ -377,6 +428,8 @@ export function createPeers ({
     reject,
     block,
     remove,
+    setAlias,
+    resolve,
     setMode,
     sendHelloConfirm,
     get size () {

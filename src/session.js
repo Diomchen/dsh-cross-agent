@@ -2,6 +2,12 @@ import crypto from 'node:crypto'
 
 import { ASK_WAIT_DEFAULT_MS, ASK_WAIT_MAX_MS, MAX_MESSAGE_BYTES } from './protocol.js'
 
+/** 设权限时等会话注册的重试预算：10 × 100ms = 1s。 */
+const APPLY_RETRIES = 10
+const APPLY_RETRY_MS = 100
+/** set 之后复核 `current()` 的轮询间隔；投影可能晚一拍。 */
+const APPLY_VERIFY_MS = 20
+
 /**
  * 跨端会话桥：把"一条指令"变成"本机某个 DSH 会话里的一次 agent turn"，再把答复捞回来。
  *
@@ -114,6 +120,81 @@ export function createSessionBridge ({ ctx, store, log, now = () => Date.now() }
       return existing !== undefined && existing !== null
     } catch {
       return false
+    }
+  }
+
+  /**
+   * 给一条刚建好的会话设权限，并**读回实际值**。
+   *
+   * 为什么不能只调 `permissionPresets.set()` 就完事：
+   * - `sessions.get(sessionId)` 在会话刚创建时可能还返回 null；
+   *   旧实现遇到 null 会静默跳过 set，回复却仍说"权限 danger-full-access"。
+   * - `permissionPresets.set()` 先 append `permission/preset`，再 append
+   *   `sandbox/mode`；两步之间失败时，日志里的身份和实际生效模式会不一致。
+   *
+   * 所以这里：等会话出现（有限次重试）→ set → `current()` 复核。
+   * `applied` 只在复核通过时为 true；宿主没有 `current()` 时返回 `applied:null`，
+   * 宁可说"未验证"，也不把目标档冒充成已生效。
+   *
+   * @returns {{applied: boolean|null, effective: string|null, verified: boolean, reason: string|null, error?: string}}
+   */
+  async function applyPreset (sessionId, preset, { retries = APPLY_RETRIES, retryMs = APPLY_RETRY_MS } = {}) {
+    if (typeof sessionId !== 'string' || sessionId === '' || typeof preset !== 'string' || preset === '') {
+      return { applied: false, effective: null, verified: false, reason: 'bad-request' }
+    }
+
+    const { sessions } = controllers()
+    const presets = service('permissionPresets')
+    if (typeof sessions?.get !== 'function') {
+      return { applied: false, effective: null, verified: false, reason: 'sessions-unavailable' }
+    }
+    if (typeof presets?.set !== 'function') {
+      return { applied: false, effective: null, verified: false, reason: 'permission-presets-unavailable' }
+    }
+
+    const attempts = Number.isInteger(retries) && retries > 0 ? retries : APPLY_RETRIES
+    let session = null
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      try {
+        session = await sessions.get(sessionId)
+      } catch {
+        session = null
+      }
+      if (session !== undefined && session !== null) break
+      if (attempt < attempts - 1) await sleep(retryMs)
+    }
+    if (session === undefined || session === null) {
+      return { applied: false, effective: null, verified: false, reason: 'session-not-ready' }
+    }
+
+    try {
+      await presets.set(session, preset)
+    } catch (error) {
+      return { applied: false, effective: null, verified: false, reason: 'set-failed', error: messageOf(error) }
+    }
+
+    if (typeof presets.current !== 'function') {
+      return { applied: null, effective: null, verified: false, reason: 'current-unavailable' }
+    }
+
+    let effective = null
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        effective = await presets.current(session)
+      } catch (error) {
+        return { applied: false, effective: null, verified: false, reason: 'verify-failed', error: messageOf(error) }
+      }
+      if (effective === preset) {
+        return { applied: true, effective, verified: true, reason: null }
+      }
+      // 投影可能晚一拍；再读两次，仍不一致才算没生效。
+      if (attempt < 2) await sleep(APPLY_VERIFY_MS)
+    }
+    return {
+      applied: false,
+      effective: typeof effective === 'string' ? effective : null,
+      verified: true,
+      reason: 'preset-not-effective'
     }
   }
 
@@ -277,7 +358,15 @@ export function createSessionBridge ({ ctx, store, log, now = () => Date.now() }
     return null
   }
 
-  return { ensure, agentFor, deliver, queueNotice, arm }
+  return { ensure, agentFor, deliver, queueNotice, arm, applyPreset }
+}
+
+function sleep (ms) {
+  return new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0)))
+}
+
+function messageOf (error) {
+  return error instanceof Error ? error.message : String(error)
 }
 
 function buildText (notices, text) {

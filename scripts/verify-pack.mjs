@@ -3,7 +3,7 @@
  * 校验 npm 包内容（CI 的打包 job 与本地发版前的自检都跑它）：
  *
  *   node scripts/verify-pack.mjs                 # 只看文件清单
- *   node scripts/verify-pack.mjs --version v0.2.6  # 顺带核对 tag 与 package.json 版本
+ *   node scripts/verify-pack.mjs --version v0.2.7  # 顺带核对 tag 与 package.json 版本
  *
  * 规则只有两条：宿主跑起来需要的文件一个都不能少；测试、脚本、CI 配置一个都不能混进去。
  * 用的是 `npm pack --dry-run`，也就是真正打包时会走的同一套 files 规则。

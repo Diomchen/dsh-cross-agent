@@ -18,7 +18,7 @@
 | `src/clock.js` | 对端时钟基准：把 ±60s 窗口平移到对端的钟（窗宽不变） | 不碰协议 |
 | `src/identity.js` | deviceId、显示名、长期密钥 | 认识对端 |
 | `src/discovery.js` | UDP beacon/ack、地址表、本机实例注册表 | 不写连接状态 |
-| `src/peers.js` | 连接状态机、模式、放行、密钥派生 | 不碰会话与文件 |
+| `src/peers.js` | 连接状态机、模式、放行、本机别名、密钥派生 | 不碰会话与文件 |
 | `src/rpc.js` | 45883 的 HTTP 服务端 + 客户端（签名在这里） | 不做业务判断 |
 | `src/session.js` | 跨端会话：建会话、投递、抓答复、串行化 | 唯一依赖 DSH 内部接口的地方 |
 | `src/approvals.js` | 待审核队列、TTL、记住 24h | 不执行动作 |
@@ -46,6 +46,8 @@
 - 改权限语义：`src/service.js` 的 `review()` + `src/approvals.js`；同时改 SPEC §5。
 - 改限额：`src/limits.js` + SPEC §7；不要在别处硬编码数字。
 - 加工具：`src/tools.js`（描述要写明"延迟=对方一次 agent turn"与"可能被拒绝"）。
+- 改别名：`src/peers.js` 的 `setAlias` / `resolve` + `service.act('alias')`。别名**只在本机**，
+  不进 beacon/hello，不改对端显示名，也不改跨端会话标题；工具与命令的 `peer` 参数认它。
 
 ## 测试
 
@@ -74,7 +76,10 @@ node scripts/smoke.mjs       # 单机验收：以已放行对端身份给本机�
 - 建会话：`sessionController.create({ workspaceId | cwd })` → `{ sessionId: "session-<uuid>" }`；
   自己拼 UUID 会被 `prompt` 判成 `session not found`。
 - 投递：`prompt(request, signal)`，**signal 必填**。
-- 权限：`sessions.get(sessionId)` 拿到会话对象，再 `permissionPresets.set(session, preset)`。
+- 权限：`sessions.get(sessionId)` 可能延迟返回 null——要重试；`permissionPresets.set(session, preset)`
+  之后用 `permissionPresets.current(session)` 复核。旧实现遇到 null 静默跳过 set、回复仍说目标档，
+  这是 Windows 上"开了 danger-full-access 但 bash 仍被 workspace-write 限制"的根因。
+  `src/session.js` 的 `applyPreset` 返回 `{applied,effective,verified,reason}`，别再绕过它直接 set。
 - 分组：`workspaceController.create({ path })` 幂等，返回 `{ workspace: { workspaceId, ... } }`。
 
 细节与踩坑记录见 [docs/harness-notes.md](docs/harness-notes.md)。

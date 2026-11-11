@@ -255,6 +255,7 @@ export async function createService (ctx, config = {}) {
       peerId: peer.deviceId,
       peerName: peer.name,
       kind: 'instruction',
+      direction: 'in',
       outcome: outcome.reply === '' ? 'no-reply' : 'answered',
       detail: firstLine(text)
     })
@@ -396,6 +397,7 @@ export async function createService (ctx, config = {}) {
       peerId,
       peerName: peer.name,
       kind: 'instruction',
+      direction: 'in',
       outcome: result.ok ? 'tool-ok' : 'tool-failed',
       detail: `${tool}${result.error ? ` · ${result.error}` : ''}`
     })
@@ -453,17 +455,27 @@ export async function createService (ctx, config = {}) {
         workspaceId: created.workspaceId,
         title: created.title,
         permission: resolved.preset,
+        permissionApplied: created.applied,
+        permissionEffective: created.effective,
+        permissionVerified: created.verified,
         createdAt: Date.now()
       })
     } catch (error) {
       log.warn(`[dsh-cross-agent] 记录远端会话失败：${error?.message ?? error}`)
     }
+    const permissionNote = created.applied === true
+      ? ''
+      : created.verified === true
+        ? ` · 权限未生效（实际 ${created.effective ?? '未知'}）`
+        : created.applied === false
+          ? ` · 权限未生效（${created.applyReason ?? 'unknown'}）`
+          : ` · 权限未验证（${created.applyReason ?? 'unknown'}）`
     await audit.record({
       peerId,
       peerName: peer.name,
       kind: 'session',
       outcome: 'created',
-      detail: `${dir} · ${title} · ${resolved.preset}${resolved.clamped ? ` (请求 ${resolved.requested} 被夹住)` : ''}`
+      detail: `${dir} · ${title} · ${resolved.preset}${resolved.clamped ? ` (请求 ${resolved.requested} 被夹住)` : ''}${permissionNote}`
     })
     return {
       ok: true,
@@ -472,7 +484,11 @@ export async function createService (ctx, config = {}) {
       title: created.title,
       permission: resolved.preset,
       requestedPermission: resolved.requested,
-      clamped: resolved.clamped
+      clamped: resolved.clamped,
+      applied: created.applied === true,
+      effective: typeof created.effective === 'string' ? created.effective : null,
+      verified: created.verified === true,
+      applyReason: created.applyReason ?? null
     }
   }
 
@@ -491,13 +507,18 @@ export async function createService (ctx, config = {}) {
     const sessionId = created?.sessionId
     if (typeof sessionId !== 'string' || sessionId === '') throw httpFail(500, 'session-failed')
 
+    let permissionApply = null
     if (typeof preset === 'string' && preset !== '') {
       try {
-        const session = await ctx?.sessions?.get?.(sessionId)
-        if (session !== undefined && session !== null) await ctx?.permissionPresets?.set?.(session, preset)
+        permissionApply = await session.applyPreset(sessionId, preset)
       } catch (error) {
-        // 权限没设上不该让整条请求失败，但要留下痕迹
-        log.warn(`[dsh-cross-agent] 设置会话权限失败（${preset}）：${error?.message ?? error}`)
+        // applyPreset 自己会兜住宿主异常；这里只防它自身出 bug。
+        permissionApply = { applied: false, effective: null, verified: false, reason: 'apply-threw', error: error?.message ?? String(error) }
+      }
+      if (permissionApply.applied !== true) {
+        const label = permissionApply.applied === null ? '未验证' : '未生效'
+        const actual = permissionApply.effective === null ? '' : `，实际 ${permissionApply.effective}`
+        log.warn(`[dsh-cross-agent] 设置会话权限${label}（${preset}）：${permissionApply.reason ?? 'unknown'}${actual}`)
       }
     }
     try {
@@ -505,7 +526,16 @@ export async function createService (ctx, config = {}) {
     } catch (error) {
       log.warn(`[dsh-cross-agent] 会话改名失败：${error?.message ?? error}`)
     }
-    return { sessionId, workspaceId, title, permission: preset }
+    return {
+      sessionId,
+      workspaceId,
+      title,
+      permission: preset,
+      applied: permissionApply?.applied ?? null,
+      effective: permissionApply?.effective ?? null,
+      verified: permissionApply?.verified === true,
+      applyReason: permissionApply?.reason ?? null
+    }
   }
 
   async function runPeerTool (peer, tool, args, budget) {
@@ -614,12 +644,30 @@ export async function createService (ctx, config = {}) {
           ok: true,
           result: await peers.setMode(requireDeviceId(payload), payload.mode, { confirmed: payload.confirmed === true })
         }
-      case 'approve':
-        return { ok: true, result: await approvals.resolve(requireId(payload), 'approved', { remember: payload.remember === true }) }
-      case 'reject':
-        return { ok: true, result: await approvals.resolve(requireId(payload), 'rejected') }
+      case 'approve': {
+        const id = requireId(payload)
+        const item = approvals.get(id)
+        // 连接请求的"同意"就是放行对端：要换密钥、回 hello-confirm，只改队列状态等于没放行。
+        if (item !== null && item.status === 'pending' && item.kind === 'hello') {
+          return { ok: true, result: await peers.approve(item.peerId) }
+        }
+        return { ok: true, result: await approvals.resolve(id, 'approved', { remember: payload.remember === true }) }
+      }
+      case 'reject': {
+        const id = requireId(payload)
+        const item = approvals.get(id)
+        if (item !== null && item.status === 'pending' && item.kind === 'hello') {
+          return { ok: true, result: await peers.reject(item.peerId) }
+        }
+        return { ok: true, result: await approvals.resolve(id, 'rejected') }
+      }
       case 'rename':
         return { ok: true, result: { name: await identity.rename(payload.name) } }
+      case 'alias': {
+        const deviceId = requireDeviceId(payload)
+        const seen = peers.list({ discovery }).find((row) => row.deviceId === deviceId)
+        return { ok: true, result: await peers.setAlias(deviceId, payload.alias, seen?.name ?? '') }
+      }
       case 'refresh':
         return { ok: true, result: await state() }
       case 'probe': {
@@ -639,15 +687,26 @@ export async function createService (ctx, config = {}) {
   function resolvePeer (ref) {
     if (typeof ref !== 'string' || ref.trim() === '') throw new Error('peer 不能为空')
     const value = ref.trim()
-    const direct = peers.get(value)
-    if (direct !== null) return direct
-    const rows = peers.list({ discovery })
-    const admitted = rows.filter((row) => row.state === 'admitted')
-    const byName = admitted.find((row) => row.name === value) ??
-      admitted.find((row) => row.name.toLowerCase() === value.toLowerCase())
-    if (byName !== undefined) return peers.get(byName.deviceId)
-    const candidates = admitted.map((row) => row.name).join('、') || '（还没有放行任何对端）'
-    throw new Error(`找不到已放行的对端「${value}」。当前可用：${candidates}`)
+    // deviceId → 本机别名 → 显示名；别名是本机的人起的，优先于对端自己的名字。
+    const record = peers.resolve(value)
+    if (record === null) {
+      const candidates = peers.list({ discovery })
+        .filter((row) => row.state === 'admitted')
+        .map((row) => (row.alias !== '' ? `${row.alias}（${row.name}）` : row.name))
+        .join('、') || '（还没有放行任何对端）'
+      throw new Error(`找不到已放行的对端「${value}」。当前可用：${candidates}`)
+    }
+    if (record.state !== 'admitted') {
+      const stateText = {
+        discovered: '还没连接',
+        pending: '还没放行',
+        rejected: '已被拒绝',
+        blocked: '已被封禁'
+      }[record.state] ?? record.state
+      throw new Error(`对端「${record.alias || record.name}」${stateText}，先在面板里放行`)
+    }
+    if (record.key === null) throw new Error('这个对端还没完成握手，缺少共享密钥')
+    return record
   }
 
   async function ask ({ peer: ref, text, waitMs, sessionId, correlationId }) {
@@ -682,6 +741,7 @@ export async function createService (ctx, config = {}) {
           peerId: target.deviceId,
           peerName: target.name,
           kind: 'instruction',
+          direction: 'out',
           outcome: response.reply === '' ? 'no-reply' : 'answered',
           detail: firstLine(text)
         })
@@ -702,6 +762,7 @@ export async function createService (ctx, config = {}) {
         peerId: target.deviceId,
         peerName: target.name,
         kind: 'instruction',
+        direction: 'out',
         outcome: 'failed',
         detail: `${firstLine(text)} · ${error?.message ?? error}`
       })
@@ -737,7 +798,11 @@ export async function createService (ctx, config = {}) {
       title: response.title,
       permission: response.permission,
       requestedPermission: response.requestedPermission ?? null,
-      clamped: response.clamped === true
+      clamped: response.clamped === true,
+      applied: response.applied === true,
+      effective: typeof response.effective === 'string' ? response.effective : null,
+      verified: response.verified === true,
+      applyReason: response.applyReason ?? null
     }
   }
 
@@ -783,6 +848,7 @@ export async function createService (ctx, config = {}) {
         peerId: target.deviceId,
         peerName: target.name,
         kind: 'instruction',
+        direction: 'out',
         outcome: 'tool-ok',
         detail: tool
       })
@@ -792,6 +858,7 @@ export async function createService (ctx, config = {}) {
       peerId: target.deviceId,
       peerName: target.name,
       kind: 'instruction',
+      direction: 'out',
       outcome: 'tool-failed',
       detail: `${tool} · ${response?.reason ?? response?.error ?? 'unknown'}`
     })
@@ -801,6 +868,7 @@ export async function createService (ctx, config = {}) {
   function listPeers () {
     return peers.list({ discovery }).map((row) => ({
       name: row.name,
+      alias: row.alias ?? '',
       deviceId: row.deviceId,
       state: row.state,
       mode: row.mode,

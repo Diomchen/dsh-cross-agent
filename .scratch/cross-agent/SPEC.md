@@ -46,7 +46,7 @@
 |---|---|---|
 | `identity.js` | `deviceId`、显示名、X25519 长期密钥，持久化 | 不认识对端 |
 | `discovery.js` | UDP beacon 收发、地址表、心跳 | 不写状态、不认证 |
-| `peers.js` | 连接表、状态机、权限模式、共享密钥 | 不碰文件与会话 |
+| `peers.js` | 连接表、状态机、权限模式、**本机别名**、共享密钥 | 不碰文件与会话 |
 | `protocol.js` | 报文编解码、HMAC 签名/校验、nonce 窗口、上限常量 | 不做 IO |
 | `rpc.js` | 45883 上的 HTTP 服务端 + 出站客户端 | 不做业务判断 |
 | `session.js` | 跨端会话的查找/创建、投递指令、抓答复 | 不做审核 |
@@ -119,12 +119,16 @@ HTTP `Date` 头估出来（`src/clock.js`）。这只是一次平移，不是放
 | GET | `/ca/v1/file?path=<相对路径>` | 是 | 从本机**共享目录**（可多个根）流式下载；落在任何根之外的路径 404 |
 | GET | `/ca/v1/tools` | 是 | 列出本机对外开放（`exposedTools`）的工具名 |
 | POST | `/ca/v1/tool` | 是 | `{tool,args,waitMs}` → 在白名单里才执行，返回 `{ok,text,reason}` |
-| POST | `/ca/v1/session/create` | 是 | `{path,title?,permission?,waitMs}` → 在 `path` 那个目录下建会话（目录即项目分组，已注册则复用），返回 `{ok,sessionId,workspaceId,permission,clamped}` |
+| POST | `/ca/v1/session/create` | 是 | `{path,title?,permission?,waitMs}` → 在 `path` 那个目录下建会话（目录即项目分组，已注册则复用），返回 `{ok,sessionId,workspaceId,permission,requestedPermission,clamped,applied,effective,verified}` |
 
 `/session/create` 的权限是**接收方定上限**：`permission` 只是请求，比本目录规则更松的一律夹到上限
 （`clamped:true`），除非配置显式开了 `allowRemotePermissionRaise`。规则表是
 `sessionPermissionRules: [{path, preset}]`，最长前缀匹配；没命中用 `sessionPermissionDefault`。
 `allowRemoteSessions: false` 时这条端点直接 403。
+
+`permission` 是解析出的**目标档**；`applied` / `effective` 是建完后从宿主读回的实际值。
+`applied:false` 表示宿主没有把权限设上（会话还没注册、`permissionPresets` 不可用、或设置后复核不一致），
+调用方不得把它当成目标权限会话；`effective` 是实际档，读不到时为 `null`，`verified:false` 表示没读到实际值。
 
 ### 4.4 密钥协商（TOFU）
 
@@ -159,12 +163,12 @@ discovered ──(人点放行, 完成协商)──> admitted(confirm|open)
 | 表 | 键 | 内容 | 上限 |
 |---|---|---|---|
 | `identity` | `self` | deviceId/name/priv/pub/fingerprint | 1 |
-| `peers` | deviceId | name/state/mode/key/fingerprint/时间戳/地址（内存） | 64 |
+| `peers` | deviceId | name/**alias**/state/mode/key/fingerprint/时间戳/地址（内存） | 64 |
 | `approvals` | id | kind/peerId/摘要/原文/createdAt/expiresAt/status | 200 |
 | `grants` | `peerId:kind` | expiresAt | 200 |
 | `transfers` | id | peer/direction/name/size/sha256/status/at | 500 |
 | `results` | correlationId | peer/status/reply/at | 200 |
-| `audit` | seq | at/peer/kind/outcome/detail | 1000（环形） |
+| `audit` | seq | at/peer/kind/outcome/direction/detail | 1000（环形） |
 
 ## 7. 限额
 
@@ -194,14 +198,33 @@ discovered ──(人点放行, 完成协商)──> admitted(confirm|open)
 
 工具描述必须写明：跨端延迟 = 对方一次 agent turn；`confirm` 模式下可能被对方的人拒绝或超时。
 
-人的入口：`/cross-agent status|pending|approve|reject|admit|mode|block|rename`。
+**别名（本地，不上线）**：本机的人可以给对端起一个别名，存在 `peers` 表的 `alias` 字段里。
+`peer` 参数按 `deviceId` → 别名 → 显示名解析（别名不区分大小写，别名之间不许重名）；面板先显示别名，
+旁边保留对端自己的显示名。别名**不进** beacon / hello / 指令，也不改跨端会话标题。
+
+人的入口：`/cross-agent status|pending|approve|reject|connect|allow|mode|block|alias|rename|probe`。
 
 ## 9. UI
 
-- `main` 槽位，key `cross-agent`：四个分区——连接 / 待审核 / 传输 / 审计。
-- `shell.bottom`：`跨端 · N 待确认`（N=0 时显示"跨端 · 无待办"），点击切到面板。
+- `main` 槽位，key `cross-agent`。分区按"人想知道什么"排，不按数据结构排：
+  1. 顶部：本机是谁、几条连接在线、**有没有事等你**（0 件时只留一行"没有待办"）；
+  2. 「需要你决定」：只在有待办时出现。`hello`/`ask`/`file`/`tool`/`session` 共用一条队列，
+     最新的在上（和通知的直觉一致），带倒计时；连接请求的"同意"必须真正放行对端
+     （换密钥 + 回 `hello-confirm`），不能只把队列项置成 approved；
+  3. 「对端」：在线状态、**权限模式用两段开关表达**（需要审核 / 完全开放），并在下方写清
+     这个模式的实际后果；别名可原地编辑（旁边保留对端自己的显示名），指纹、放行时间、
+     封禁 / 移除记录都在这里；本机显示名在「详情」里改；
+  4. 「活动」：审计流水按天分组，可筛 指令 / 文件 / 连接，可"只看异常"、可搜索；点一条展开
+     完整内容与原始记录（kind/outcome）。文件事件来自 `transfers` 表（带方向、大小、sha256，
+     不受审计 100 条窗口限制），其余事件来自审计；指令的"发出/收到"靠审计的 `direction` 区分。
+- 空区域不占卡片：没有待办、没有对端、没有记录时只留一句说明。
+- 机器词（`open`、`answered`、`session-not-mine`、`transfer`）必须翻成人话；原始词只出现在
+  展开的"记录"里。颜色只表达状态（在线 / 警告 / 失败），不用来区分方向或装饰。
+- 面板只读，所有动作仍走 `/cross-agent/action`；不复制宿主侧的业务判断。
+- `shell.bottom`：`跨端 · N 件待审核` / `跨端 · X 在线 · 无待办` / `跨端 · 没有连接`，点击切到面板。
 - 文案中文为主，`locale/en.json` 给英文。图标 `icon.svg`。
-- 审核卡片必须写明：同意一条指令 = 对方 agent 会在「跨端 · X」会话里开始执行，消耗本机额度。
+- 审核卡片必须写明：同意一条指令 = 对方 agent 会在「跨端 · X」会话里开始执行，消耗本机额度；
+  放行一条连接 = 对方从此能向本机下指令、传文件。
 
 ## 9.5 跨端工具（v0.2）
 

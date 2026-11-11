@@ -21,7 +21,7 @@ export function createAudit ({ store, now = () => Date.now(), max = 1000 } = {})
     }
   }
 
-  async function record ({ peerId = null, peerName = null, kind, outcome = 'ok', detail = '' } = {}) {
+  async function record ({ peerId = null, peerName = null, kind, outcome = 'ok', detail = '', direction = null } = {}) {
     await ensureLoaded()
     if (!AUDIT_KINDS.includes(kind)) throw new Error(`audit: 未知的 kind ${kind}`)
     const entry = {
@@ -31,6 +31,8 @@ export function createAudit ({ store, now = () => Date.now(), max = 1000 } = {})
       peerName,
       kind,
       outcome,
+      // 指令消息的方向：`in` = 对端让我们做事，`out` = 我们让对端做事。老记录没有这个字段。
+      direction: direction === 'in' || direction === 'out' ? direction : null,
       detail: String(detail ?? '').slice(0, 500)
     }
     try {

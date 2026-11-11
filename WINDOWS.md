@@ -1,12 +1,16 @@
-# Windows 测试包说明（v0.2.6）
+# Windows 测试包说明（v0.2.8）
 
-这个包已在 Windows 11 实机跑通（发现、放行、指令、文件、远端建会话）。任何一步不对就把
-`%USERPROFILE%\.dsh\dsh-cross-agent\bootstrap.log` 和 `data\` 一起发回来。
+0.2.6 已在 Windows 11 实机跑通（发现、放行、指令、文件、远端建会话）。
+0.2.7 只改远端建会话的权限 apply：等会话注册后再 `permissionPresets.set`，并用 `current()` 复核；
+建会话结果多了 `applied` / `effective` / `verified`。装完重点按 §5.5 复核。
+0.2.8 重做面板（待办优先、活动流合并、权限模式开关、详情折叠）+ 对端别名（只存本机）；
+「待审核」里的连接请求点「放行」现在会真正放行对端。升级后照常按 §5 跑一遍。
+任何一步不对就把 `%USERPROFILE%\.dsh\dsh-cross-agent\bootstrap.log` 和 `data\` 一起发回来。
 
 ## 1. 前置
 
 - DSH Desktop（或 `dsh`）已经能正常启动，Node ≥ 22.12。
-- 包：`dsh-cross-agent-0.2.6.tgz`。
+- 包：`dsh-cross-agent-0.2.8.tgz`。
 
 ## 2. 安装 / 升级
 
@@ -14,8 +18,8 @@
 
 ```powershell
 New-Item -ItemType Directory -Force "$env:USERPROFILE\.dsh\packages" | Out-Null
-Copy-Item C:\path\to\dsh-cross-agent-0.2.6.tgz "$env:USERPROFILE\.dsh\packages\"
-dsh plugin --profile desktop add "file:$env:USERPROFILE\.dsh\packages\dsh-cross-agent-0.2.6.tgz"
+Copy-Item C:\path\to\dsh-cross-agent-0.2.8.tgz "$env:USERPROFILE\.dsh\packages\"
+dsh plugin --profile desktop add "file:$env:USERPROFILE\.dsh\packages\dsh-cross-agent-0.2.8.tgz"
 ```
 
 装完**重启 DSH**（关进程再开）。验证版本：
@@ -127,6 +131,11 @@ v0.2.2 及更早版本里 `workingDirectory` 服务没注入成功，会悄悄�
 ```
 
 规则按**最长前缀**匹配；远端请求里带的 `permission` 只能比规则更紧，更松会被夹住并回 `clamped: true`。
+
+结果里的 `permission` 只是**目标档**；`applied` / `effective` / `verified` 才是实际生效情况。
+如果 `applied: false`，别把这条会话当成 `danger-full-access`——agent 的 bash 仍是 `workspace-write`
+的 Low-IL 受限 token，`Copy-Item` / `pnpm` 写工作区外会失败是正常的。排查时看**同一会话里**的
+`write` 工具或权限选择器；不要用普通 PowerShell 的 `mkdir` 判断——普通 shell 没有沙箱，agent shell 有。
 
 ## 5.6 时钟（没权限校时的机器）
 

@@ -49,7 +49,7 @@ export async function registerTools (ctx, service, { log } = {}) {
 
   disposers.push(ctx.tools.register(define({
     name: 'peer_list',
-    description: '列出局域网里的 DSH 对端：显示名、是否在线、是否已放行、权限模式（open/confirm）。给对方下指令或用 peer_file_* 之前先看这里，确认名字与状态。',
+    description: '列出局域网里的 DSH 对端：别名、显示名、是否在线、是否已放行、权限模式（open/confirm）。给对方下指令或用 peer_file_* 之前先看这里，确认名字与状态。',
     parameters: {},
     output: {
       schema: {
@@ -64,6 +64,7 @@ export async function registerTools (ctx, service, { log } = {}) {
               additionalProperties: false,
               properties: {
                 name: { type: 'string', required: true },
+                alias: { type: 'string' },
                 deviceId: { type: 'string', required: true },
                 state: { type: 'string', required: true },
                 mode: { type: 'string', required: true },
@@ -81,6 +82,7 @@ export async function registerTools (ctx, service, { log } = {}) {
       return {
         peers: service.listPeers().map((peer) => ({
           name: peer.name,
+          alias: peer.alias ?? '',
           deviceId: peer.deviceId,
           state: peer.state,
           mode: peer.mode,
@@ -95,7 +97,7 @@ export async function registerTools (ctx, service, { log } = {}) {
     name: 'peer_ask',
     description: '给另一台机器上的 agent 下一条指令，并等它回答。文字默认投进对方那台机器上标题为「跨端 · 你的名字」的会话；带上 session_id 则投进对方**为你建出来的**那条会话（见 peer_session_create）。由对方的 agent 自己决定怎么做；本插件不会在对方机器上执行 shell。对方要跑完一次 agent turn 才有答复，通常几秒到几分钟。对方是 confirm 模式时，它的人可能拒绝或超时（返回 ok:false）。超时后可以带 correlation_id 再查一次结果。',
     parameters: {
-      peer: { type: 'string', required: true, description: '对方的显示名或 deviceId。先用 peer_list 查。' },
+      peer: { type: 'string', required: true, description: '对方的别名、显示名或 deviceId。先用 peer_list 查。' },
       text: { type: 'string', required: true, description: '要对方做什么，或要问它什么。一段话，最多 8 KiB。' },
       session_id: { type: 'string', description: '投到对方哪条会话：填 peer_session_create 返回的 id。不填就投到这条连接的固定跨端会话。对方只接受**它自己为你建出来的**会话 id，别人的会话一律拒绝。' },
       wait_ms: { type: 'number', description: '最多等多久，默认 120000，上限 600000。' },
@@ -141,9 +143,9 @@ export async function registerTools (ctx, service, { log } = {}) {
 
   disposers.push(ctx.tools.register(define({
     name: 'peer_session_create',
-    description: '让另一台机器在它本机的某个目录下新建一条会话（目录即项目分组：已注册的目录会复用，新目录会当场注册成分组），并返回会话 id。新会话的权限上限由**对方**的配置决定，你只能要求更紧（只读），不能要求更松。对方是 confirm 模式时，它的人要先点同意；不点头就返回 awaiting-review。注意：这会在对方机器上真的多出一条会话、占它的额度。',
+    description: '让另一台机器在它本机的某个目录下新建一条会话（目录即项目分组：已注册的目录会复用，新目录会当场注册成分组），并返回会话 id。新会话的权限上限由**对方**的配置决定，你只能要求更紧（只读），不能要求更松。对方是 confirm 模式时，它的人要先点同意；不点头就返回 awaiting-review。注意：这会在对方机器上真的多出一条会话、占它的额度。结果里的 `applied/effective/verified` 是实际生效情况；`applied:false` 时不要把 `permission` 当成已经生效的权限。',
     parameters: {
-      peer: { type: 'string', required: true, description: '对方的显示名或 deviceId。' },
+      peer: { type: 'string', required: true, description: '对方的别名、显示名或 deviceId。' },
       path: { type: 'string', required: true, description: '对方机器上的绝对目录路径。已有项目就用它原来的目录；想新建分组就给一个新目录（目录必须已存在）。' },
       title: { type: 'string', description: '新会话的标题；留空用目录名。' },
       permission: { type: 'string', description: '想要的权限档：read-only / workspace-write / danger-full-access。只能比对方给该目录的上限更紧，更松会被夹住并在结果里标出。' },
@@ -161,15 +163,25 @@ export async function registerTools (ctx, service, { log } = {}) {
           permission: { type: 'string' },
           requestedPermission: { type: 'string' },
           clamped: { type: 'boolean' },
+          applied: { type: 'boolean' },
+          effective: { type: 'string' },
+          verified: { type: 'boolean' },
+          applyReason: { type: 'string' },
           reason: { type: 'string' }
         }
       },
-      render: (_args, value) => [{
-        type: 'text',
-        text: value.ok === true
-          ? `已在对方建好会话 ${value.sessionId}（${value.title}，权限 ${value.permission}${value.clamped ? `；请求的 ${value.requestedPermission} 被夹到上限` : ''}）`
-          : `未建成：${value.reason === '' ? 'unknown' : value.reason}`
-      }]
+      render: (_args, value) => {
+        if (value.ok !== true) {
+          return [{ type: 'text', text: `未建成：${value.reason === '' ? 'unknown' : value.reason}` }]
+        }
+        const state = value.applied === true
+          ? (value.verified === true ? '已生效' : '已设置，未验证')
+          : value.verified === true
+            ? `**未生效**（实际 ${value.effective === '' ? '未知' : value.effective}）`
+            : `**未验证**（${value.applyReason === '' ? 'unknown' : value.applyReason}）`
+        const clamped = value.clamped === true ? `；请求的 ${value.requestedPermission} 被夹到上限` : ''
+        return [{ type: 'text', text: `已在对方建好会话 ${value.sessionId}（${value.title}，权限 ${value.permission} · ${state}${clamped}）` }]
+      }
     },
     isConcurrencySafe: () => false,
     async execute (args) {
@@ -188,6 +200,10 @@ export async function registerTools (ctx, service, { log } = {}) {
         permission: result.permission ?? '',
         requestedPermission: result.requestedPermission ?? '',
         clamped: result.clamped === true,
+        applied: result.applied === true,
+        effective: result.effective ?? '',
+        verified: result.verified === true,
+        applyReason: result.applyReason ?? '',
         reason: result.reason ?? ''
       }
     }
@@ -197,7 +213,7 @@ export async function registerTools (ctx, service, { log } = {}) {
     name: 'peer_file_send',
     description: '把一个文件推给另一台机器上的 DSH，落到它工作目录的 .cross-agent/inbox/<你的名字>/。单件上限 100 MiB；同名不覆盖（加序号）。收到回执才算送到——回执里带 sha256 与实际路径。对方是 confirm 模式时要等它的人点同意。',
     parameters: {
-      peer: { type: 'string', required: true, description: '对方的显示名或 deviceId。' },
+      peer: { type: 'string', required: true, description: '对方的别名、显示名或 deviceId。' },
       path: { type: 'string', required: true, description: '本机要发的文件的绝对路径或相对工作目录的路径。目录请先打包。' },
       note: { type: 'string', description: '给对方的一句话说明，最多 200 字。' }
     },
@@ -237,7 +253,7 @@ export async function registerTools (ctx, service, { log } = {}) {
     name: 'peer_file_fetch',
     description: '从另一台机器的共享目录 .cross-agent/share/ 里取一个文件到本机（只读，不能取共享目录以外的路径）。同名不覆盖；取回后按 sha256 校验，不一致就丢弃。',
     parameters: {
-      peer: { type: 'string', required: true, description: '对方的显示名或 deviceId。' },
+      peer: { type: 'string', required: true, description: '对方的别名、显示名或 deviceId。' },
       path: { type: 'string', required: true, description: '相对于对方 .cross-agent/share/ 的路径，例如 reports/a.md。' },
       dest: { type: 'string', description: '本机落盘目录；默认落到工作目录的 .cross-agent/inbox/<对方名字>/。' }
     },
@@ -275,7 +291,7 @@ export async function registerTools (ctx, service, { log } = {}) {
     name: 'peer_tools',
     description: '看另一台机器**当前对外开放**了哪些工具（对方在配置里点名过的才列得出来）。想用 peer_tool 调东西之前先用它确认名字，不要猜。',
     parameters: {
-      peer: { type: 'string', required: true, description: '对方的显示名或 deviceId。' }
+      peer: { type: 'string', required: true, description: '对方的别名、显示名或 deviceId。' }
     },
     output: {
       schema: {
@@ -302,7 +318,7 @@ export async function registerTools (ctx, service, { log } = {}) {
     name: 'peer_tool',
     description: '调用另一台机器上的一个工具。只有对方在配置里点名开放（exposedTools）的工具能调，名字先用 peer_tools 查；调用在对方那个跨端会话里、用对方的权限执行。对方是 confirm 模式时，每次调用都要它的人点头，可能被拒绝或超时（返回 ok:false）。不要用它去猜路径或试权限——被拒会记进对方的审计。',
     parameters: {
-      peer: { type: 'string', required: true, description: '对方的显示名或 deviceId。' },
+      peer: { type: 'string', required: true, description: '对方的别名、显示名或 deviceId。' },
       tool: { type: 'string', required: true, description: '对方开放的工具名，例如 read_file。' },
       arguments: { type: 'object', additionalProperties: true, description: '传给那个工具的参数对象，形状按对方工具的 schema。' },
       wait_ms: { type: 'number', description: '最多等多久，默认 120000，上限 600000。' }
@@ -374,6 +390,7 @@ function renderPeers (peers) {
         : peer.state === 'discovered'
           ? '已发现 · 未连接'
           : peer.state
-    return `${peer.online ? '●' : '○'} ${peer.name}（${state}）`
+    const alias = typeof peer.alias === 'string' && peer.alias !== '' ? `${peer.alias} / ` : ''
+    return `${peer.online ? '●' : '○'} ${alias}${peer.name}（${state}）`
   }).join('\n')
 }
